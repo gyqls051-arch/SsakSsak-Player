@@ -1,0 +1,370 @@
+import { useEffect, useRef, useState } from 'react';
+import { usePlayerStore } from '../store/playerStore';
+import { useCaptureStore } from '../store/captureStore';
+import { SPEED_STEPS } from '../hooks/useKeyBindings';
+import { formatTime } from '../utils/format';
+import { useSeekThumbnail } from '../hooks/useSeekThumbnail';
+
+function snapSpeed(value: number): number {
+  let nearest = SPEED_STEPS[0];
+  let best = Math.abs(value - nearest);
+  for (const s of SPEED_STEPS) {
+    const d = Math.abs(value - s);
+    if (d < best) {
+      best = d;
+      nearest = s;
+    }
+  }
+  return nearest;
+}
+
+// Map upward mouse distance (px) to a sensitivity factor for fine scrubbing —
+// near the bar = 1.0 (normal), far above = down to ~0.05 (frame-by-frame feel).
+function sensitivityFromDistance(distancePx: number): number {
+  const clamped = Math.max(0, distancePx);
+  return Math.max(0.05, 1 - (clamped / 250) * 0.95);
+}
+
+interface Props {
+  onCapture: () => void;
+  onTogglePanel: () => void;
+  panelOpen: boolean;
+  onToggleLoopAB: () => void;
+  onClearAB: () => void;
+  onExtractClip: () => void;
+}
+
+export default function ControlBar({
+  onCapture,
+  onTogglePanel,
+  panelOpen,
+  onToggleLoopAB,
+  onClearAB,
+  onExtractClip,
+}: Props) {
+  const {
+    filename,
+    paused,
+    position,
+    duration,
+    speed,
+    volume,
+    muted,
+    inPoint,
+    outPoint,
+    loopAB,
+  } = usePlayerStore();
+  const captures = useCaptureStore((s) => s.captures);
+  const seekRef = useRef<HTMLDivElement>(null);
+
+  const [dragTime, setDragTime] = useState<number | null>(null);
+  const [scrubSensitivity, setScrubSensitivity] = useState<number | null>(null);
+  const [hoverState, setHoverState] = useState<{ time: number; x: number } | null>(null);
+
+  const seekThumb = useSeekThumbnail(filename, hoverState?.time ?? null);
+
+  const disabled = !filename;
+  const displayTime = dragTime ?? position;
+  const progressPct = duration > 0 ? Math.min(100, Math.max(0, (displayTime / duration) * 100)) : 0;
+
+  const seekTo = (time: number) => {
+    const clamped = Math.max(0, Math.min(duration, time));
+    window.offcut.mpv.command('seek', clamped, 'absolute');
+  };
+
+  const handleSeekDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (disabled || duration <= 0 || !seekRef.current) return;
+    const rect = seekRef.current.getBoundingClientRect();
+    const startX = e.clientX;
+    const startRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const startTime = startRatio * duration;
+
+    setDragTime(startTime);
+    setScrubSensitivity(1);
+    seekTo(startTime);
+
+    let lastSeekAt = 0;
+    const SEEK_THROTTLE_MS = 50;
+
+    const onMove = (ev: MouseEvent) => {
+      const deltaX = ev.clientX - startX;
+      const upwardDistance = Math.max(0, rect.top - ev.clientY);
+      const sensitivity = sensitivityFromDistance(upwardDistance);
+      const ratioDelta = (deltaX / rect.width) * sensitivity;
+      const next = Math.max(0, Math.min(duration, startTime + ratioDelta * duration));
+
+      setDragTime(next);
+      setScrubSensitivity(sensitivity);
+
+      const now = Date.now();
+      if (now - lastSeekAt >= SEEK_THROTTLE_MS) {
+        lastSeekAt = now;
+        seekTo(next);
+      }
+    };
+
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const deltaX = ev.clientX - startX;
+      const upwardDistance = Math.max(0, rect.top - ev.clientY);
+      const sensitivity = sensitivityFromDistance(upwardDistance);
+      const ratioDelta = (deltaX / rect.width) * sensitivity;
+      const finalTime = Math.max(0, Math.min(duration, startTime + ratioDelta * duration));
+      seekTo(finalTime);
+      setDragTime(null);
+      setScrubSensitivity(null);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const handleSeekHover = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (disabled || duration <= 0 || !seekRef.current) return;
+    const rect = seekRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const t = (x / rect.width) * duration;
+    setHoverState({ time: t, x });
+  };
+
+  // Clear stale hover state when leaving the player area entirely (drag may
+  // already have moved focus elsewhere).
+  useEffect(() => {
+    if (dragTime !== null) setHoverState(null);
+  }, [dragTime]);
+
+  const showFineHint = scrubSensitivity !== null && scrubSensitivity < 0.85;
+  const hasAB = inPoint !== null || outPoint !== null;
+  const canExtract = inPoint !== null && outPoint !== null && outPoint > inPoint;
+
+  return (
+    <footer className="px-3 pt-2.5 pb-2 border-t border-white/5 bg-bg-surface space-y-2 select-none">
+      {hasAB && (
+        <div className="flex items-center gap-2 text-[10px] font-mono">
+          <span className="text-yellow-300">
+            <span className="text-white/40">In</span> {inPoint !== null ? formatTime(inPoint) : '–'}
+            <span className="mx-1 text-white/30">·</span>
+            <span className="text-white/40">Out</span> {outPoint !== null ? formatTime(outPoint) : '–'}
+            {canExtract && (
+              <span className="ml-2 text-white/40">({formatTime(outPoint! - inPoint!)})</span>
+            )}
+          </span>
+          {canExtract && (
+            <>
+              <button
+                onClick={onToggleLoopAB}
+                className={`px-2 py-0.5 rounded transition ${loopAB ? 'bg-yellow-400/30 text-yellow-200' : 'bg-white/5 hover:bg-white/10 text-white/60'}`}
+                title="A-B 구간 반복 (L)"
+              >
+                ↻ 반복 {loopAB ? 'ON' : 'OFF'}
+              </button>
+              <button
+                onClick={onExtractClip}
+                className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/60"
+                title="구간 무손실 잘라내기 (Ctrl+Shift+S)"
+              >
+                ✂ 잘라내기
+              </button>
+            </>
+          )}
+          <button
+            onClick={onClearAB}
+            className="ml-auto px-2 py-0.5 text-white/40 hover:text-white"
+            title="지우기 (Shift+Backspace)"
+          >
+            지우기
+          </button>
+        </div>
+      )}
+      <div className="relative">
+        <div
+          ref={seekRef}
+          onMouseDown={handleSeekDown}
+          onMouseMove={handleSeekHover}
+          onMouseEnter={handleSeekHover}
+          onMouseLeave={() => setHoverState(null)}
+          className={`relative h-2 rounded-full bg-white/10 ${disabled ? 'opacity-30' : 'cursor-pointer'}`}
+        >
+          <div
+            className="absolute inset-y-0 left-0 bg-accent rounded-full pointer-events-none"
+            style={{ width: `${progressPct}%` }}
+          />
+          {duration > 0 && inPoint !== null && outPoint !== null && (
+            <div
+              className={`absolute inset-y-0 pointer-events-none ${loopAB ? 'bg-yellow-400/30' : 'bg-yellow-400/15'}`}
+              style={{
+                left: `${(Math.min(inPoint, outPoint) / duration) * 100}%`,
+                width: `${(Math.abs(outPoint - inPoint) / duration) * 100}%`,
+              }}
+            />
+          )}
+          {duration > 0 && inPoint !== null && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-0.5 h-5 bg-yellow-400 pointer-events-none"
+              style={{ left: `${(inPoint / duration) * 100}%` }}
+              title={`In: ${formatTime(inPoint)} (I)`}
+            />
+          )}
+          {duration > 0 && outPoint !== null && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-0.5 h-5 bg-yellow-400 pointer-events-none"
+              style={{ left: `${(outPoint / duration) * 100}%` }}
+              title={`Out: ${formatTime(outPoint)} (O)`}
+            />
+          )}
+          {duration > 0 &&
+            captures.map((c) => {
+              const left = Math.min(100, Math.max(0, (c.time / duration) * 100));
+              return (
+                <div
+                  key={c.id}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    seekTo(c.time);
+                  }}
+                  className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-yellow-400 hover:w-1 hover:bg-yellow-300 transition-all cursor-pointer"
+                  style={{ left: `${left}%` }}
+                  title={`캡처: ${formatTime(c.time)}`}
+                />
+              );
+            })}
+          {hoverState && (
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-px h-3.5 bg-white/60 pointer-events-none"
+              style={{ left: `${hoverState.x}px` }}
+            />
+          )}
+        </div>
+        {showFineHint && (
+          <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded bg-black/80 text-[10px] font-mono text-accent pointer-events-none">
+            정밀 스크럽 ×{scrubSensitivity!.toFixed(2)}
+          </div>
+        )}
+        {hoverState && !showFineHint && seekRef.current && (
+          <div
+            className="absolute bottom-full mb-1.5 pointer-events-none z-10"
+            style={{
+              left: `${Math.min(
+                Math.max(48, hoverState.x),
+                seekRef.current.clientWidth - 48,
+              )}px`,
+              transform: 'translateX(-50%)',
+            }}
+          >
+            <div className="flex flex-col items-center">
+              {seekThumb ? (
+                <img
+                  src={seekThumb}
+                  alt=""
+                  draggable={false}
+                  className="w-44 aspect-video object-cover rounded border border-white/20 bg-black shadow-lg"
+                />
+              ) : (
+                <div className="w-44 aspect-video rounded border border-white/10 bg-black/60 shadow-lg flex items-center justify-center">
+                  <div className="text-[10px] text-white/30">미리보기 생성 중…</div>
+                </div>
+              )}
+              <div className="mt-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-mono text-white/90">
+                {formatTime(hoverState.time)}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <button
+          onClick={() => window.offcut.mpv.command('frameBackStep')}
+          disabled={disabled}
+          className="ctrl-btn text-[10px] font-bold tracking-tight"
+          title="이전 프레임 (,)"
+        >
+          ◀1
+        </button>
+        <button
+          onClick={() => window.offcut.mpv.command('togglePause')}
+          disabled={disabled}
+          className="ctrl-btn w-10 h-10 text-base"
+          title="재생/일시정지 (Space)"
+        >
+          {paused ? '▶' : '❚❚'}
+        </button>
+        <button
+          onClick={() => window.offcut.mpv.command('frameStep')}
+          disabled={disabled}
+          className="ctrl-btn text-[10px] font-bold tracking-tight"
+          title="다음 프레임 (.)"
+        >
+          1▶
+        </button>
+
+        <div className="text-xs font-mono text-white/70 tabular-nums ml-2 tracking-tight">
+          {formatTime(displayTime)}{' '}
+          <span className="text-white/30">/ {formatTime(duration)}</span>
+        </div>
+
+        <div className="flex-1" />
+
+        <button
+          onClick={onCapture}
+          disabled={disabled}
+          className="ctrl-btn"
+          title="현재 프레임 캡처 (S)"
+        >
+          📷
+        </button>
+
+        <button
+          onClick={() => window.offcut.mpv.command('mute')}
+          disabled={disabled}
+          className="ctrl-btn"
+          title="음소거 (M)"
+        >
+          {muted ? '🔇' : '🔊'}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={150}
+          value={volume}
+          onChange={(e) => window.offcut.mpv.command('volume', Number(e.target.value))}
+          disabled={disabled}
+          className="w-24 accent-accent"
+          title={`볼륨 ${Math.round(volume)}% (↑↓)`}
+        />
+
+        <select
+          value={snapSpeed(speed)}
+          onChange={(e) => window.offcut.mpv.command('speed', Number(e.target.value))}
+          disabled={disabled}
+          className="ml-2 bg-white/5 hover:bg-white/10 text-white text-xs px-2 py-1 rounded border-none outline-none disabled:opacity-30"
+          title="재생 속도 ([ ])"
+        >
+          {SPEED_STEPS.map((s) => (
+            <option key={s} value={s} className="bg-bg-elevated">
+              {s}x
+            </option>
+          ))}
+        </select>
+
+        <button
+          onClick={() => window.offcut.mpv.command('toggleFullscreen')}
+          disabled={disabled}
+          className="ctrl-btn"
+          title="풀스크린 (F)"
+        >
+          ⛶
+        </button>
+
+        <button
+          onClick={onTogglePanel}
+          className={`ctrl-btn ${panelOpen ? 'bg-white/20' : ''}`}
+          title="사이드 패널 토글"
+        >
+          ☰
+        </button>
+      </div>
+    </footer>
+  );
+}

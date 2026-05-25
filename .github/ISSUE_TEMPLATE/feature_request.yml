@@ -1,0 +1,17 @@
+name: ✨ 기능 요청
+description: 새 기능 또는 개선 제안.
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 어떤 상황에서 불편한가요?
+      description: 어떤 워크플로우에서 막히는지부터 시작해주세요 (편집·VFX·색보정 등).
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 어떻게 해결되면 좋겠어요?

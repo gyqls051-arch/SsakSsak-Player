@@ -1,0 +1,23 @@
+node_modules/
+dist/
+release/
+.vite/
+*.local
+.env*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Bundled binaries (downloaded by user/CI, not committed)
+resources/bin/*.exe
+!resources/bin/.gitkeep

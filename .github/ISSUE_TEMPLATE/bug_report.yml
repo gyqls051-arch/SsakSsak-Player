@@ -1,0 +1,63 @@
+name: 🐛 버그 제보
+description: 동작하지 않거나 비정상 종료되는 문제를 알려주세요.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 앱 버전
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Windows 버전
+      options:
+        - Windows 11
+        - Windows 10
+        - 기타 (Description에 적어주세요)
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU (선택)
+      placeholder: 예) RTX 3060 / Intel Arc A380 / 내장 그래픽
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 어떤 일이 일어났나요?
+      description: 무엇을 하려고 했고 / 무엇이 일어났고 / 무엇이 일어나야 하는지.
+    validations:
+      required: true
+
+  - type: textarea
+    id: file-info
+    attributes:
+      label: 영상 파일 정보 (선택)
+      description: |
+        info 탭에서 표시되는 코덱·해상도·컨테이너 정보.
+        특정 영상에서만 발생하면 매우 도움됩니다.
+      placeholder: |
+        예) H.264 / 3840x2160 / MP4 / 60fps / 10-bit
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 재현 절차
+      placeholder: |
+        1. 파일 열기
+        2. ...
+        3. ...
+
+  - type: textarea
+    id: console
+    attributes:
+      label: 콘솔 / 에러 로그
+      description: F12 개발자 도구 콘솔에 빨간 메시지 있으면 첨부.
+      render: text

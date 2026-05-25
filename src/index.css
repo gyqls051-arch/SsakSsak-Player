@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* CSS variables drive the accent color so the picker can change it at
+   * runtime without rebuilding. Tailwind's accent token reads --accent-rgb. */
+  --accent-rgb: 255 107 53;
+  --accent-hover-rgb: 255 133 86;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+@layer components {
+  .ctrl-btn {
+    @apply w-8 h-8 rounded flex items-center justify-center bg-white/5 hover:bg-white/10 text-white text-sm transition disabled:opacity-30 disabled:cursor-not-allowed;
+  }
+}
+
+/* range slider thin styling */
+input[type='range'] {
+  height: 4px;
+}

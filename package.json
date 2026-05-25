@@ -1,0 +1,62 @@
+{
+  "name": "offcut-player",
+  "private": true,
+  "version": "0.1.0",
+  "description": "OFFCUT Player — lightweight video player for editors",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c green,blue \"vite\" \"wait-on http://localhost:3011 && node electron-launcher.js\"",
+    "vite:dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "electron:build": "npm run build && electron-builder",
+    "setup:bin": "pwsh -ExecutionPolicy Bypass -File scripts/setup-binaries.ps1"
+  },
+  "dependencies": {
+    "node-mpv": "^2.0.0-beta.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^9.0.1",
+    "electron": "^33.3.2",
+    "electron-builder": "^26.0.12",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.6",
+    "typescript": "^5.5.3",
+    "vite": "^5.3.3",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.offcut.player",
+    "productName": "OFFCUT Player",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

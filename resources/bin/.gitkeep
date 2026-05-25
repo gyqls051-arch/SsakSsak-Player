@@ -1,0 +1,5 @@
+Place `mpv.exe` and `ffmpeg.exe` here.
+
+Download:
+- mpv: https://mpv.io/installation/ (Windows builds — extract mpv.exe)
+- ffmpeg: https://www.gyan.dev/ffmpeg/builds/ (essentials build — extract ffmpeg.exe)
