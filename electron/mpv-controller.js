@@ -1,5 +1,29 @@
 const NodeMpv = require('node-mpv');
 
+// Whitelist of mpv properties the renderer may read/write through IPC.
+// Anything outside this set is rejected so the IPC bridge can't be used to
+// drive arbitrary mpv property access (e.g. script-opts, ytdl, stream-open
+// behaviours). Keep in sync with the actual app usage:
+//   - ab-loop-a / ab-loop-b : A-B loop (src/hooks/useABLoopSync.ts)
+//   - speed / duration / volume / mute / pause : status reads
+//   - path / filename / filename/no-ext / time-pos / estimated-frame-number :
+//     capture metadata reads (electron/ipc.js capture:now, open())
+const ALLOWED_SET_PROPS = new Set(['ab-loop-a', 'ab-loop-b', 'speed', 'volume', 'mute', 'pause']);
+const ALLOWED_GET_PROPS = new Set([
+  'ab-loop-a',
+  'ab-loop-b',
+  'speed',
+  'duration',
+  'volume',
+  'mute',
+  'pause',
+  'path',
+  'filename',
+  'filename/no-ext',
+  'time-pos',
+  'estimated-frame-number',
+]);
+
 class MpvController {
   /**
    * @param {{ mpvBinary: string, onStatus?: (s: object) => void }} opts
@@ -162,7 +186,9 @@ class MpvController {
       case 'mute':
         return this.mpv.mute();
       default:
-        return this.mpv.command(cmd, args.map((a) => String(a)));
+        // Only the explicitly handled commands above are permitted via IPC.
+        // Reject anything else instead of forwarding raw commands to mpv.
+        throw new Error(`Disallowed mpv command: ${String(cmd)}`);
     }
   }
 
@@ -175,11 +201,17 @@ class MpvController {
   }
 
   async setProperty(name, value) {
+    if (!ALLOWED_SET_PROPS.has(name)) {
+      throw new Error(`Disallowed mpv property (set): ${String(name)}`);
+    }
     await this._ensureStarted();
     return this.mpv.setProperty(name, value);
   }
 
   async getProperty(name) {
+    if (!ALLOWED_GET_PROPS.has(name)) {
+      throw new Error(`Disallowed mpv property (get): ${String(name)}`);
+    }
     await this._ensureStarted();
     return this.mpv.getProperty(name);
   }

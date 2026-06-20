@@ -44,6 +44,42 @@ function getHwnd(win) {
   return buf.readUInt32LE(0).toString();
 }
 
+// Allowed media input extensions for ffmpeg/ffprobe. Mirrors the open-dialog
+// video filters plus common audio containers we might probe/transcode.
+const ALLOWED_INPUT_EXTS = new Set([
+  '.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.wmv', '.flv',
+  '.ts', '.mts', '.m2ts', '.mpg', '.mpeg', '.3gp', '.ogv',
+  '.mp3', '.aac', '.m4a', '.wav', '.flac', '.opus', '.ogg',
+]);
+
+// Validate a media input path before handing it to ffmpeg/ffprobe: it must be a
+// real, existing regular file with an allowed extension. Throws on failure.
+function validateMediaInput(input) {
+  if (!input || typeof input !== 'string') {
+    throw new Error('입력 경로가 없습니다');
+  }
+  const resolved = path.resolve(input);
+  let st;
+  try {
+    st = fs.statSync(resolved);
+  } catch {
+    throw new Error('입력 파일을 찾을 수 없습니다');
+  }
+  if (!st.isFile()) {
+    throw new Error('입력 경로가 파일이 아닙니다');
+  }
+  const ext = path.extname(resolved).toLowerCase();
+  if (!ALLOWED_INPUT_EXTS.has(ext)) {
+    throw new Error(`허용되지 않은 입력 형식입니다: ${ext || '(확장자 없음)'}`);
+  }
+  return resolved;
+}
+
+// ffmpeg/ffprobe only need to read local files (and write pipes). Restricting
+// the protocol whitelist prevents a crafted "input" path from being treated as
+// a network/concat/subfile protocol URL.
+const FF_PROTOCOL_WHITELIST = ['-protocol_whitelist', 'file,pipe'];
+
 function isPathInsideCaptureDir(target) {
   const norm = path.normalize(target).toLowerCase();
   const allowed = path.normalize(getCaptureDir()).toLowerCase();
@@ -59,11 +95,13 @@ function isPathInsideCaptureDir(target) {
 function captureFrameWithFfmpeg(ffmpegBin, input, timeSeconds, output) {
   return new Promise((resolve, reject) => {
     const t = Math.max(0, Number(timeSeconds) || 0);
+    const safeInput = validateMediaInput(input);
     const args = [
       '-y',
       '-loglevel', 'error',
+      ...FF_PROTOCOL_WHITELIST,
       '-ss', t.toFixed(3),
-      '-i', input,
+      '-i', safeInput,
       '-vframes', '1',
       output,
     ];
@@ -84,11 +122,13 @@ function thumbnailWithFfmpeg(ffmpegBin, input, timeSeconds, width = 192) {
   return new Promise((resolve, reject) => {
     const t = Math.max(0, Number(timeSeconds) || 0);
     const w = Math.max(64, Math.min(512, Number(width) || 192));
+    const safeInput = validateMediaInput(input);
     const args = [
       '-y',
       '-loglevel', 'error',
+      ...FF_PROTOCOL_WHITELIST,
       '-ss', t.toFixed(3),
-      '-i', input,
+      '-i', safeInput,
       '-vframes', '1',
       '-vf', `scale=${w}:-2`,
       '-f', 'image2pipe',
@@ -121,10 +161,12 @@ function waveformWithFfmpeg(ffmpegBin, input, width = 1920, height = 60, rgb = '
       .split(',')
       .map((n) => Number(n).toString(16).padStart(2, '0'))
       .join('');
+    const safeInput = validateMediaInput(input);
     const args = [
       '-y',
       '-loglevel', 'error',
-      '-i', input,
+      ...FF_PROTOCOL_WHITELIST,
+      '-i', safeInput,
       '-filter_complex',
       `[0:a]aformat=channel_layouts=mono,showwavespic=s=${w}x${h}:colors=#${colorHex}:scale=lin[v]`,
       '-map', '[v]',
@@ -155,6 +197,8 @@ module.exports = {
   formatTimeForFilename,
   sanitizeBasename,
   getHwnd,
+  validateMediaInput,
+  FF_PROTOCOL_WHITELIST,
   isPathInsideCaptureDir,
   captureFrameWithFfmpeg,
   thumbnailWithFfmpeg,

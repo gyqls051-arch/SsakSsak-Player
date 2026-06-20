@@ -175,7 +175,10 @@ class TranscodeJob {
 
     this.ffmpegBin = ffmpegBin;
     this.preset = preset;
-    this.args = preset.buildArgs({ input, output, duration, inputBitrate });
+    // Restrict ffmpeg to local file/pipe protocols so a crafted input path
+    // can't be interpreted as a network/concat/subfile protocol URL. The
+    // whitelist must precede the first -i, so prepend it to the preset args.
+    this.args = ['-protocol_whitelist', 'file,pipe', ...preset.buildArgs({ input, output, duration, inputBitrate })];
     this.input = input;
     this.output = output;
     this.duration = duration;

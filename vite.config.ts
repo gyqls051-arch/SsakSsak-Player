@@ -20,8 +20,18 @@ export default defineConfig({
       name: 'offcut-prod-csp',
       transformIndexHtml(html, ctx) {
         if (!ctx.bundle) return html; // dev: leave CSP alone for HMR
+        const cspRe = /<meta http-equiv="Content-Security-Policy"[^>]*\/>/;
+        if (!cspRe.test(html)) {
+          // Fail the production build loudly instead of silently shipping the
+          // loose dev CSP (which permits 'unsafe-inline' scripts for HMR).
+          throw new Error(
+            'offcut-prod-csp: CSP <meta> tag not found in index.html — ' +
+              'refusing to build with the insecure dev CSP. Ensure index.html ' +
+              'contains a <meta http-equiv="Content-Security-Policy" ... /> tag.',
+          );
+        }
         return html.replace(
-          /<meta http-equiv="Content-Security-Policy"[^>]*\/>/,
+          cspRe,
           `<meta http-equiv="Content-Security-Policy" content="${PROD_CSP}" />`,
         );
       },

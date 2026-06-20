@@ -4,6 +4,9 @@ function runFfprobe(ffprobeBin, filePath) {
   return new Promise((resolve, reject) => {
     const args = [
       '-v', 'error',
+      // Restrict to local file/pipe protocols so a crafted path can't be
+      // interpreted as a network/concat/subfile protocol URL.
+      '-protocol_whitelist', 'file,pipe',
       '-print_format', 'json',
       '-show_format',
       '-show_streams',

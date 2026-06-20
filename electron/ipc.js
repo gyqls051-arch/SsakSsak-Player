@@ -13,10 +13,32 @@ const {
   formatTimeForFilename,
   sanitizeBasename,
   isPathInsideCaptureDir,
+  validateMediaInput,
+  FF_PROTOCOL_WHITELIST,
   captureFrameWithFfmpeg,
   thumbnailWithFfmpeg,
   waveformWithFfmpeg,
 } = require('./utils.js');
+
+// Confine a transcode/clip output path to either the capture dir or the
+// directory the user explicitly picked via the save dialog. We can't observe
+// the dialog here, so we accept any absolute path the user could have chosen,
+// but reject traversal and require an absolute, normalized path under an
+// existing parent directory. Output extension is constrained to media types.
+const ALLOWED_OUTPUT_EXTS = new Set([
+  '.mp4', '.mkv', '.mov', '.webm', '.m4v', '.mp3', '.m4a', '.aac', '.wav', '.png',
+]);
+
+function validateOutputPath(output) {
+  if (!output || typeof output !== 'string') throw new Error('출력 경로가 없습니다');
+  const resolved = path.resolve(output);
+  if (output.includes('..')) throw new Error('잘못된 출력 경로입니다');
+  const ext = path.extname(resolved).toLowerCase();
+  if (!ALLOWED_OUTPUT_EXTS.has(ext)) {
+    throw new Error(`허용되지 않은 출력 형식입니다: ${ext || '(확장자 없음)'}`);
+  }
+  return resolved;
+}
 const { ensureMpv, getVideoWindow, syncVideoBounds, setVideoVisible } = require('./windows.js');
 
 function registerProtocols() {
@@ -171,7 +193,8 @@ function registerIpc() {
   ipcMain.handle('ffprobe:info', async (_evt, filePath) => {
     const ffprobeBin = resolveBinary('ffprobe.exe');
     if (!ffprobeBin) throw new Error('ffprobe.exe not found in resources/bin');
-    return runFfprobe(ffprobeBin, filePath);
+    const safeInput = validateMediaInput(filePath);
+    return runFfprobe(ffprobeBin, safeInput);
   });
 
   // ---------- Transcode ----------
@@ -181,13 +204,15 @@ function registerIpc() {
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     if (!params.input || !params.output || !params.presetKey) throw new Error('필수 파라미터 누락');
-    fs.mkdirSync(path.dirname(params.output), { recursive: true });
+    const safeInput = validateMediaInput(params.input);
+    const safeOutput = validateOutputPath(params.output);
+    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
 
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     state.currentJob = new TranscodeJob({
       ffmpegBin,
-      input: params.input,
-      output: params.output,
+      input: safeInput,
+      output: safeOutput,
       presetKey: params.presetKey,
       duration: params.duration || 0,
       inputBitrate: params.inputBitrate || 0,
@@ -227,30 +252,33 @@ function registerIpc() {
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     if (!params || !params.input || !params.output) throw new Error('입력/출력 경로 누락');
+    const safeInput = validateMediaInput(params.input);
+    const safeOutput = validateOutputPath(params.output);
     const start = Number(params.start);
     const end = Number(params.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       throw new Error('잘못된 시작/끝 시각');
     }
-    fs.mkdirSync(path.dirname(params.output), { recursive: true });
+    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
 
     return new Promise((resolve, reject) => {
       const args = [
         '-y',
         '-loglevel', 'error',
+        ...FF_PROTOCOL_WHITELIST,
         '-ss', start.toFixed(3),
         '-to', end.toFixed(3),
-        '-i', params.input,
+        '-i', safeInput,
         '-c', 'copy',
         '-avoid_negative_ts', 'make_zero',
-        params.output,
+        safeOutput,
       ];
       const proc = spawn(ffmpegBin, args, { windowsHide: true });
       let stderr = '';
       proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
       proc.on('error', reject);
       proc.on('close', (code) => {
-        if (code === 0) resolve({ path: params.output });
+        if (code === 0) resolve({ path: safeOutput });
         else reject(new Error(`ffmpeg clip exited ${code}: ${stderr.trim().slice(-200)}`));
       });
     });
