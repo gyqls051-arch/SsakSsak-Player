@@ -58,6 +58,10 @@
         "to": "bin"
       }
     ],
+    "extraFiles": [
+      "LICENSE",
+      "THIRD_PARTY_LICENSES.md"
+    ],
     "win": {
       "target": "nsis"
     },
