@@ -22,6 +22,10 @@ SOFTWARE.
 
 ---
 
-This license applies to the source code of OFFCUT Player only.
-The distributed installer bundles mpv and ffmpeg (GPL components) and is
-distributed under GPLv2+. See THIRD_PARTY_LICENSES.md for details.
+This license (MIT) applies to the source code of OFFCUT Player only.
+The distributed installer additionally bundles mpv (GPLv2+) and FFmpeg
+(GPLv3, built with --enable-gpl --enable-version3) as separate executables
+invoked via IPC / child processes (mere aggregation). Those bundled binaries
+remain under their respective GPL licenses; the GPL component portion of the
+installer is distributed under GPLv3. See THIRD_PARTY_LICENSES.md for the
+exact versions, corresponding-source links, and written offer.

@@ -43,7 +43,7 @@
 - 자동 업데이트 미통합
 - 일부 키바인딩이 mpv 기본값과 중복 가능
 - HDR 메타데이터 정확도는 mpv 버전에 의존
-- 인스톨러는 mpv/ffmpeg GPL 빌드를 번들하므로 인스톨러 자체는 GPLv2+ 의무 적용
+- 인스톨러는 mpv(GPLv2+)/ffmpeg(GPLv3) GPL 빌드를 번들하므로 인스톨러의 GPL 컴포넌트 부분은 GPLv3 의무 적용 (본 앱 코드는 별도 프로세스 호출이라 MIT 유지)
 
 ### 알려진 라이선스 이슈
 - 현재 번들된 ffmpeg는 GPL 빌드 (`--enable-gpl --enable-libx264 --enable-libx265` 등 포함)
