@@ -80,6 +80,15 @@ class MpvController {
     );
     await this.mpv.start();
     this._wireEvents();
+    // Explicitly observe the properties the UI depends on. node-mpv doesn't
+    // reliably push duration on its own, which left the seekbar stuck at 0.
+    for (const prop of ['duration', 'time-pos', 'pause', 'eof-reached']) {
+      try {
+        await this.mpv.observeProperty(prop);
+      } catch {
+        // older mpv/node-mpv may already observe it — safe to ignore
+      }
+    }
     this.started = true;
   }
 
@@ -93,6 +102,17 @@ class MpvController {
     this.mpv.on('started', () => {
       this.lastStatus.paused = false;
       this._emit();
+      // Guarantee the seekbar has a duration even if the property observer is
+      // slow to fire (otherwise duration stays 0 and the bar/seek go dead).
+      this.mpv
+        .getDuration()
+        .then((d) => {
+          if (d) {
+            this.lastStatus.duration = Number(d) || 0;
+            this._emit();
+          }
+        })
+        .catch(() => {});
     });
     this.mpv.on('stopped', () => {
       this.lastStatus.paused = true;
@@ -116,6 +136,9 @@ class MpvController {
       switch (property) {
         case 'duration':
           this.lastStatus.duration = Number(value) || 0;
+          break;
+        case 'time-pos':
+          if (value != null) this.lastStatus.position = Number(value) || 0;
           break;
         case 'path':
           // mpv 'path' is the absolute file path (mpv 'filename' is basename only)
@@ -149,8 +172,13 @@ class MpvController {
   async open(filePath) {
     await this._ensureStarted();
     await this.mpv.load(filePath, 'replace');
+    // Emit immediately so the renderer mounts the video area (and the embedded
+    // mpv window becomes visible) without waiting for the play/duration reads.
     this.lastStatus.filename = filePath;
     this.lastStatus.position = 0;
+    this.lastStatus.duration = 0;
+    this.lastStatus.paused = false;
+    this._emit();
     try {
       await this.mpv.play();
       const dur = await this.mpv.getDuration();
@@ -164,14 +192,30 @@ class MpvController {
     this._emit();
   }
 
+  // True when playback has reached end-of-file (mpv keeps the last frame open
+  // because of --keep-open=always). Used to restart on the next play press.
+  async _atEof() {
+    try {
+      return !!(await this.mpv.getProperty('eof-reached'));
+    } catch {
+      return false;
+    }
+  }
+
   async command(cmd, ...args) {
     await this._ensureStarted();
     switch (cmd) {
       case 'play':
+        // Restart from the top if we're sitting at end-of-file.
+        if (await this._atEof()) await this.mpv.seek(0, 'absolute');
         return this.mpv.play();
       case 'pause':
         return this.mpv.pause();
       case 'togglePause':
+        if (await this._atEof()) {
+          await this.mpv.seek(0, 'absolute');
+          return this.mpv.play();
+        }
         return this.mpv.togglePause();
       case 'stop':
         return this.mpv.stop();

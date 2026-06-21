@@ -1,5 +1,6 @@
 const { BrowserWindow } = require('electron');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const state = require('./state.js');
 const { MpvController } = require('./mpv-controller.js');
 const { resolveBinary, getHwnd } = require('./utils.js');
@@ -193,6 +194,18 @@ async function warmupMpv() {
     await ensureMpv(emitStatus).warmup();
   } catch {
     /* ignore — first open() will start mpv the normal way */
+  }
+  // Touch ffprobe/ffmpeg so their ~200MB binaries are in the OS file cache
+  // before the first probe/thumbnail — avoids a cold-start stall on open.
+  for (const bin of ['ffprobe.exe', 'ffmpeg.exe']) {
+    const p = resolveBinary(bin);
+    if (!p) continue;
+    try {
+      const proc = spawn(p, ['-version'], { windowsHide: true });
+      proc.on('error', () => {});
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
