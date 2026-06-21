@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('offcut', {
   },
   clip: {
     extract: (params) => ipcRenderer.invoke('clip:extract', params),
+    export: (params) => ipcRenderer.invoke('clip:export', params),
   },
   preview: {
     thumbnail: (params) => ipcRenderer.invoke('preview:thumbnail', params),

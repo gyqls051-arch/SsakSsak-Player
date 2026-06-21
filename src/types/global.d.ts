@@ -141,6 +141,12 @@ declare global {
         start: number;
         end: number;
       }) => Promise<{ path: string }>;
+      export: (params: {
+        input: string;
+        output: string;
+        start: number;
+        end: number;
+      }) => Promise<{ path: string }>;
     };
     preview: {
       thumbnail: (params: { input: string; time: number; width?: number }) => Promise<string>;

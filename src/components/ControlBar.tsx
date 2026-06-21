@@ -35,6 +35,7 @@ interface Props {
   onToggleLoopAB: () => void;
   onClearAB: () => void;
   onExtractClip: () => void;
+  onExportClip: () => void;
 }
 
 export default function ControlBar({
@@ -47,6 +48,7 @@ export default function ControlBar({
   onToggleLoopAB,
   onClearAB,
   onExtractClip,
+  onExportClip,
 }: Props) {
   const {
     filename,
@@ -207,9 +209,16 @@ export default function ControlBar({
               <button
                 onClick={onExtractClip}
                 className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/60"
-                title="구간 무손실 잘라내기 (Ctrl+Shift+S)"
+                title="구간 무손실 잘라내기 — 빠름, 키프레임 단위 (Ctrl+Shift+S)"
               >
-                ✂ 잘라내기
+                ✂ 무손실
+              </button>
+              <button
+                onClick={onExportClip}
+                className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/60"
+                title="구간 내보내기 — 재인코딩, 프레임 정확 · 호환 MP4"
+              >
+                🎬 출력
               </button>
             </>
           )}

@@ -156,6 +156,7 @@ function registerIpc() {
       { label: 'In 지점 설정 (I)', click: () => send('setIn') },
       { label: 'Out 지점 설정 (O)', click: () => send('setOut') },
       { label: '구간 무손실 잘라내기', enabled: !!c.canExtract, click: () => send('extractClip') },
+      { label: '구간 내보내기 (재인코딩·정확)', enabled: !!c.canExtract, click: () => send('exportClip') },
       { type: 'separator' },
       { label: '전체화면 (F)', click: () => send('fullscreen') },
       { label: '파일 열기… (Ctrl+O)', click: () => send('open') },
@@ -393,6 +394,51 @@ function registerIpc() {
       proc.on('close', (code) => {
         if (code === 0) resolve({ path: safeOutput });
         else reject(new Error(`ffmpeg clip exited ${code}: ${stderr.trim().slice(-200)}`));
+      });
+    });
+  });
+
+  // ---------- Clip export (re-encode, frame-accurate) ----------
+  // Unlike clip:extract (-c copy, fast but cuts on keyframes), this re-encodes
+  // the In/Out range to a universally-playable H.264 MP4 with exact endpoints.
+  ipcMain.handle('clip:export', async (_evt, params) => {
+    const ffmpegBin = resolveBinary('ffmpeg.exe');
+    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
+    if (!params || !params.input || !params.output) throw new Error('입력/출력 경로 누락');
+    const safeInput = validateMediaInput(params.input);
+    const safeOutput = validateOutputPath(params.output);
+    const start = Number(params.start);
+    const end = Number(params.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new Error('잘못된 시작/끝 시각');
+    }
+    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
+    const dur = end - start;
+
+    return new Promise((resolve, reject) => {
+      const args = [
+        '-y',
+        '-loglevel', 'error',
+        ...FF_PROTOCOL_WHITELIST,
+        '-ss', start.toFixed(3),
+        '-i', safeInput,
+        '-t', dur.toFixed(3),
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '20',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-movflags', '+faststart',
+        safeOutput,
+      ];
+      const proc = spawn(ffmpegBin, args, { windowsHide: true });
+      let stderr = '';
+      proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
+      proc.on('error', reject);
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ path: safeOutput });
+        else reject(new Error(`ffmpeg export exited ${code}: ${stderr.trim().slice(-200)}`));
       });
     });
   });
