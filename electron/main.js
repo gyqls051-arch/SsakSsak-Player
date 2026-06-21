@@ -1,6 +1,6 @@
 const { app, BrowserWindow, protocol } = require('electron');
 const state = require('./state.js');
-const { createMainWindow } = require('./windows.js');
+const { createMainWindow, warmupMpv } = require('./windows.js');
 const { registerIpc, registerProtocols } = require('./ipc.js');
 
 // Disable Chromium hardware acceleration so its GPU compositor doesn't fight
@@ -26,9 +26,13 @@ protocol.registerSchemesAsPrivileged([
 
 registerIpc();
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerProtocols();
-  createMainWindow();
+  await createMainWindow();
+  // Pre-spawn mpv in the background so the first file opens without the
+  // process cold-start lag. Deferred a tick so it doesn't compete with the
+  // initial window paint.
+  setTimeout(warmupMpv, 300);
 });
 
 app.on('window-all-closed', () => {

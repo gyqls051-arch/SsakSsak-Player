@@ -27,6 +27,9 @@ function sensitivityFromDistance(distancePx: number): number {
 
 interface Props {
   onCapture: () => void;
+  onCopyFrame: () => void;
+  capturePulse: number;
+  copyPulse: number;
   onTogglePanel: () => void;
   panelOpen: boolean;
   onToggleLoopAB: () => void;
@@ -36,6 +39,9 @@ interface Props {
 
 export default function ControlBar({
   onCapture,
+  onCopyFrame,
+  capturePulse,
+  copyPulse,
   onTogglePanel,
   panelOpen,
   onToggleLoopAB,
@@ -54,12 +60,30 @@ export default function ControlBar({
     outPoint,
     loopAB,
   } = usePlayerStore();
-  const captures = useCaptureStore((s) => s.captures);
+  const allCaptures = useCaptureStore((s) => s.captures);
+  // Only this video's captures appear as seekbar markers.
+  const captures = filename ? allCaptures.filter((c) => c.videoPath === filename) : [];
   const seekRef = useRef<HTMLDivElement>(null);
 
   const [dragTime, setDragTime] = useState<number | null>(null);
   const [scrubSensitivity, setScrubSensitivity] = useState<number | null>(null);
   const [hoverState, setHoverState] = useState<{ time: number; x: number } | null>(null);
+  const [flashCap, setFlashCap] = useState(false);
+  const [flashCopy, setFlashCopy] = useState(false);
+
+  useEffect(() => {
+    if (!capturePulse) return;
+    setFlashCap(true);
+    const t = setTimeout(() => setFlashCap(false), 450);
+    return () => clearTimeout(t);
+  }, [capturePulse]);
+
+  useEffect(() => {
+    if (!copyPulse) return;
+    setFlashCopy(true);
+    const t = setTimeout(() => setFlashCopy(false), 450);
+    return () => clearTimeout(t);
+  }, [copyPulse]);
 
   const seekThumb = useSeekThumbnail(filename, hoverState?.time ?? null);
 
@@ -134,12 +158,33 @@ export default function ControlBar({
     if (dragTime !== null) setHoverState(null);
   }, [dragTime]);
 
+  // Drive the transparent overlay window that renders the hover thumbnail above
+  // the mpv video window (an in-page element would be clipped behind it).
+  // Re-runs on hover-move (position + time) and when the thumbnail resolves.
+  useEffect(() => {
+    if (disabled || !hoverState || !seekRef.current) {
+      window.offcut.preview.overlayHide();
+      return;
+    }
+    const rect = seekRef.current.getBoundingClientRect();
+    const centerX = rect.left + Math.min(Math.max(48, hoverState.x), rect.width - 48);
+    window.offcut.preview.overlayShow({
+      dataUrl: seekThumb ?? '',
+      label: formatTime(hoverState.time),
+      centerX,
+      bottomY: rect.top - 6,
+    });
+  }, [hoverState, seekThumb, disabled]);
+
+  // Hide the overlay if the control bar unmounts (e.g. fullscreen layout swap).
+  useEffect(() => () => void window.offcut.preview.overlayHide(), []);
+
   const showFineHint = scrubSensitivity !== null && scrubSensitivity < 0.85;
   const hasAB = inPoint !== null || outPoint !== null;
   const canExtract = inPoint !== null && outPoint !== null && outPoint > inPoint;
 
   return (
-    <footer className="px-3 pt-2.5 pb-2 border-t border-white/5 bg-bg-surface space-y-2 select-none">
+    <footer className="px-3 pt-2.5 pb-2 border-t border-white/10 bg-bg-surface space-y-2 select-none">
       {hasAB && (
         <div className="flex items-center gap-2 text-[10px] font-mono">
           <span className="text-yellow-300">
@@ -241,36 +286,6 @@ export default function ControlBar({
             정밀 스크럽 ×{scrubSensitivity!.toFixed(2)}
           </div>
         )}
-        {hoverState && !showFineHint && seekRef.current && (
-          <div
-            className="absolute bottom-full mb-1.5 pointer-events-none z-10"
-            style={{
-              left: `${Math.min(
-                Math.max(48, hoverState.x),
-                seekRef.current.clientWidth - 48,
-              )}px`,
-              transform: 'translateX(-50%)',
-            }}
-          >
-            <div className="flex flex-col items-center">
-              {seekThumb ? (
-                <img
-                  src={seekThumb}
-                  alt=""
-                  draggable={false}
-                  className="w-44 aspect-video object-cover rounded border border-white/20 bg-black shadow-lg"
-                />
-              ) : (
-                <div className="w-44 aspect-video rounded border border-white/10 bg-black/60 shadow-lg flex items-center justify-center">
-                  <div className="text-[10px] text-white/30">미리보기 생성 중…</div>
-                </div>
-              )}
-              <div className="mt-1 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-mono text-white/90">
-                {formatTime(hoverState.time)}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="flex items-center gap-1.5">
@@ -309,10 +324,18 @@ export default function ControlBar({
         <button
           onClick={onCapture}
           disabled={disabled}
-          className="ctrl-btn"
+          className={`ctrl-btn transition ${flashCap ? 'ring-2 ring-accent bg-accent/25 scale-110' : ''}`}
           title="현재 프레임 캡처 (S)"
         >
           📷
+        </button>
+        <button
+          onClick={onCopyFrame}
+          disabled={disabled}
+          className={`ctrl-btn transition ${flashCopy ? 'ring-2 ring-accent bg-accent/25 scale-110' : ''}`}
+          title="현재 프레임 클립보드 복사"
+        >
+          📋
         </button>
 
         <button
@@ -349,7 +372,7 @@ export default function ControlBar({
         </select>
 
         <button
-          onClick={() => window.offcut.mpv.command('toggleFullscreen')}
+          onClick={() => window.offcut.window.toggleFullscreen()}
           disabled={disabled}
           className="ctrl-btn"
           title="풀스크린 (F)"

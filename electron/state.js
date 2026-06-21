@@ -6,6 +6,10 @@ module.exports = {
   mainWindow: null,
   /** @type {import('electron').BrowserWindow | null} */
   videoWindow: null,
+  /** Transparent always-on-top overlay for the seekbar preview thumbnail.
+   *  Lives above the mpv video window so the preview isn't clipped behind it.
+   *  @type {import('electron').BrowserWindow | null} */
+  previewWindow: null,
   /** @type {import('./mpv-controller.js').MpvController | null} */
   mpv: null,
   /** @type {string | null} */

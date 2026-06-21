@@ -140,6 +140,12 @@ class MpvController {
     });
   }
 
+  // Spawn the mpv process ahead of time (idle, no file) so the first open()
+  // doesn't pay the ~hundreds-of-ms cold-start cost. Best-effort.
+  async warmup() {
+    await this._ensureStarted();
+  }
+
   async open(filePath) {
     await this._ensureStarted();
     await this.mpv.load(filePath, 'replace');

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRecentFiles } from '../hooks/useRecentFiles';
+import { useSettingsStore } from '../store/settingsStore';
 
 function basename(p: string): string {
   return p.split(/[\\/]/).pop() ?? p;
@@ -7,6 +8,7 @@ function basename(p: string): string {
 
 export default function RecentFilesMenu({ onOpen }: { onOpen: (p: string) => void }) {
   const { files, remove, clear } = useRecentFiles();
+  const secret = useSettingsStore((s) => s.secret);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -19,7 +21,8 @@ export default function RecentFilesMenu({ onOpen }: { onOpen: (p: string) => voi
     return () => window.removeEventListener('mousedown', onDocClick);
   }, [open]);
 
-  if (files.length === 0) return null;
+  // In secret mode the recent list is hidden entirely (no history shown).
+  if (secret || files.length === 0) return null;
 
   return (
     <div className="relative" ref={rootRef}>

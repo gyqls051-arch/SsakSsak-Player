@@ -1,7 +1,8 @@
-const { ipcMain, dialog, shell, protocol } = require('electron');
+const { ipcMain, dialog, shell, protocol, Menu, clipboard, nativeImage } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 
 const state = require('./state.js');
 const { runFfprobe } = require('./ffprobe.js');
@@ -14,6 +15,8 @@ const {
   sanitizeBasename,
   isPathInsideCaptureDir,
   validateMediaInput,
+  listVideoFiles,
+  uniquePath,
   FF_PROTOCOL_WHITELIST,
   captureFrameWithFfmpeg,
   thumbnailWithFfmpeg,
@@ -39,7 +42,14 @@ function validateOutputPath(output) {
   }
   return resolved;
 }
-const { ensureMpv, getVideoWindow, syncVideoBounds, setVideoVisible } = require('./windows.js');
+const {
+  ensureMpv,
+  getVideoWindow,
+  syncVideoBounds,
+  setVideoVisible,
+  showSeekPreview,
+  hideSeekPreview,
+} = require('./windows.js');
 
 function registerProtocols() {
   protocol.handle('offcut-cap', async (request) => {
@@ -84,6 +94,18 @@ function registerIpc() {
     return result.canceled ? null : result.filePath;
   });
 
+  // Open a folder and return its playable video files (for the playlist view).
+  ipcMain.handle('folder:open', async () => {
+    if (!state.mainWindow) return null;
+    const result = await dialog.showOpenDialog(state.mainWindow, {
+      title: '폴더 열기',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    const folder = result.filePaths[0];
+    return { folder, files: listVideoFiles(folder) };
+  });
+
   ipcMain.handle('dialog:chooseDirectory', async (_evt, defaultPath) => {
     if (!state.mainWindow) return null;
     const result = await dialog.showOpenDialog(state.mainWindow, {
@@ -112,6 +134,35 @@ function registerIpc() {
   ipcMain.handle('mpv:getProperty', async (_evt, name) => ensureMpv(onStatus).getProperty(name));
 
   // ---------- Window ----------
+  // Right-click context menu over the video. Built as a native OS menu so it
+  // renders ABOVE the mpv child window (a React menu would be hidden behind it).
+  // Each item just forwards an action id to the renderer, which reuses its
+  // existing handlers — keeping all app logic in one place.
+  ipcMain.handle('window:showVideoMenu', (_evt, ctx) => {
+    if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+    const c = ctx || {};
+    const send = (action) => {
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+        state.mainWindow.webContents.send('menu:action', action);
+      }
+    };
+    const template = [
+      { label: c.paused ? '▶  재생' : '❚❚  일시정지', click: () => send('togglePause') },
+      { label: '◀  이전 프레임', click: () => send('frameBackStep') },
+      { label: '다음 프레임  ▶', click: () => send('frameStep') },
+      { type: 'separator' },
+      { label: '현재 프레임 캡처 (S)', click: () => send('capture') },
+      { label: '현재 프레임 클립보드 복사', click: () => send('copyFrame') },
+      { label: 'In 지점 설정 (I)', click: () => send('setIn') },
+      { label: 'Out 지점 설정 (O)', click: () => send('setOut') },
+      { label: '구간 무손실 잘라내기', enabled: !!c.canExtract, click: () => send('extractClip') },
+      { type: 'separator' },
+      { label: '전체화면 (F)', click: () => send('fullscreen') },
+      { label: '파일 열기… (Ctrl+O)', click: () => send('open') },
+    ];
+    Menu.buildFromTemplate(template).popup({ window: state.mainWindow });
+  });
+
   ipcMain.handle('window:toggleFullscreen', () => {
     if (!state.mainWindow) return false;
     const next = !state.mainWindow.isFullScreen();
@@ -131,22 +182,26 @@ function registerIpc() {
   ipcMain.handle('video:hide', () => setVideoVisible(false));
   ipcMain.handle('video:setOverlayActive', (_evt, active) => {
     state.overlayActive = !!active;
-    if (state.overlayActive) setVideoVisible(false);
-    else syncVideoBounds();
+    if (state.overlayActive) {
+      hideSeekPreview();
+      setVideoVisible(false);
+    } else syncVideoBounds();
   });
 
-  // ---------- Capture ----------
-  ipcMain.handle('capture:now', async () => {
-    const m = ensureMpv(onStatus);
-    const dir = getCaptureDir();
-    const ffmpegBin = resolveBinary('ffmpeg.exe');
-    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
+  // Seekbar hover preview, rendered in a transparent overlay window so it sits
+  // above the mpv video window instead of being clipped behind it.
+  ipcMain.handle('preview:overlayShow', (_evt, params) => showSeekPreview(params));
+  ipcMain.handle('preview:overlayHide', () => hideSeekPreview());
 
+  // ---------- Capture ----------
+  // Read the current source path / time / frame / name from mpv. Shared by the
+  // disk capture and the clipboard copy.
+  async function readCurrentFrame() {
+    const m = ensureMpv(onStatus);
     let sourceName = 'capture';
     let inputPath = null;
     let timePos = 0;
     let frame = null;
-
     try {
       const fn = await m.getProperty('filename/no-ext');
       if (fn && typeof fn === 'string') sourceName = sanitizeBasename(fn);
@@ -164,12 +219,70 @@ function registerIpc() {
       const n = Number(f);
       if (Number.isFinite(n)) frame = n;
     } catch { /* frame stays null */ }
-
     if (!inputPath) throw new Error('현재 재생 중인 영상 경로를 찾을 수 없습니다');
+    return { sourceName, inputPath, timePos, frame };
+  }
 
-    const outPath = path.join(dir, `${sourceName}_${formatTimeForFilename(timePos)}.png`);
+  ipcMain.handle('capture:now', async (_evt, opts) => {
+    const ffmpegBin = resolveBinary('ffmpeg.exe');
+    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
+    const ext = opts && opts.format === 'jpg' ? 'jpg' : 'png';
+    const { sourceName, inputPath, timePos, frame } = await readCurrentFrame();
+    const outPath = uniquePath(
+      path.join(getCaptureDir(), `${sourceName}_${formatTimeForFilename(timePos)}.${ext}`),
+    );
     await captureFrameWithFfmpeg(ffmpegBin, inputPath, timePos, outPath);
-    return { path: outPath, time: timePos, frame };
+    return { path: outPath, videoPath: inputPath, time: timePos, frame };
+  });
+
+  // Copy the current frame straight to the OS clipboard (no disk file kept).
+  ipcMain.handle('capture:copyCurrent', async () => {
+    const ffmpegBin = resolveBinary('ffmpeg.exe');
+    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
+    const { inputPath, timePos } = await readCurrentFrame();
+    const tmp = path.join(os.tmpdir(), `offcut_clip_${Date.now()}.png`);
+    try {
+      await captureFrameWithFfmpeg(ffmpegBin, inputPath, timePos, tmp);
+      const img = nativeImage.createFromPath(tmp);
+      if (img.isEmpty()) throw new Error('클립보드 이미지 생성 실패');
+      clipboard.writeImage(img);
+    } finally {
+      fs.promises.unlink(tmp).catch(() => {});
+    }
+    return { ok: true };
+  });
+
+  // Copy an existing capture PNG/JPG to the clipboard.
+  ipcMain.handle('capture:copyFile', async (_evt, p) => {
+    if (!isPathInsideCaptureDir(p)) throw new Error('허용되지 않은 경로입니다');
+    const img = nativeImage.createFromPath(p);
+    if (img.isEmpty()) throw new Error('이미지를 읽을 수 없습니다');
+    clipboard.writeImage(img);
+    return { ok: true };
+  });
+
+  // Start a native OS drag of a capture file so it can be dropped into other
+  // apps (Premiere, Photoshop, Explorer, chat windows, …).
+  ipcMain.handle('capture:startDrag', (evt, p) => {
+    if (!isPathInsideCaptureDir(p) || !fs.existsSync(p)) return;
+    let icon = nativeImage.createFromPath(p);
+    if (icon.isEmpty()) {
+      // startDrag requires a non-empty icon; fall back to a 1px transparent one.
+      icon = nativeImage.createEmpty();
+    } else {
+      icon = icon.resize({ width: 128 });
+    }
+    evt.sender.startDrag({ file: p, icon });
+  });
+
+  // Write a base64 data URL (PNG) to a path the user picked — used by the
+  // contact-sheet export.
+  ipcMain.handle('capture:saveImage', async (_evt, dataUrl, outPath) => {
+    const safe = validateOutputPath(outPath);
+    const m = /^data:image\/\w+;base64,(.+)$/s.exec(typeof dataUrl === 'string' ? dataUrl : '');
+    if (!m) throw new Error('잘못된 이미지 데이터입니다');
+    await fs.promises.writeFile(safe, Buffer.from(m[1], 'base64'));
+    return { path: safe };
   });
 
   ipcMain.handle('capture:getDir', () => getCaptureDir());

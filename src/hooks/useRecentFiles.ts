@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSettingsStore } from '../store/settingsStore';
 
 const KEY = 'offcut.player.recent';
 const MAX = 10;
@@ -32,6 +33,8 @@ export function useRecentFiles() {
   }, []);
 
   const add = useCallback((path: string) => {
+    // Secret (incognito) mode: don't leave a trace of what was opened.
+    if (useSettingsStore.getState().secret) return;
     setFiles((prev) => {
       const next = [path, ...prev.filter((p) => p !== path)].slice(0, MAX);
       save(next);

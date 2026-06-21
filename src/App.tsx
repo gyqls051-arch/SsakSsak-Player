@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from './store/playerStore';
+import { useSettingsStore } from './store/settingsStore';
+import { usePlaylistStore } from './store/playlistStore';
 import { useCaptureStore, type Capture } from './store/captureStore';
 import ControlBar from './components/ControlBar';
 import RecentFilesMenu from './components/RecentFilesMenu';
@@ -8,7 +10,6 @@ import TranscodeModal from './components/TranscodeModal';
 import HelpModal from './components/HelpModal';
 import CapturePreviewModal from './components/CapturePreviewModal';
 import StartScreen from './components/StartScreen';
-import AccentPicker from './components/AccentPicker';
 import { useKeyBindings } from './hooks/useKeyBindings';
 import { useRecentFiles } from './hooks/useRecentFiles';
 import { useAutoHideUI } from './hooks/useAutoHideUI';
@@ -41,6 +42,8 @@ export default function App() {
 
   const addCapture = useCaptureStore((s) => s.add);
   const { add: addRecent } = useRecentFiles();
+  const secret = useSettingsStore((s) => s.secret);
+  const toggleSecret = useSettingsStore((s) => s.toggleSecret);
 
   // ---- Local state ----
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -49,9 +52,19 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [previewCapture, setPreviewCapture] = useState<Capture | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [capturePulse, setCapturePulse] = useState(0);
+  const [copyPulse, setCopyPulse] = useState(0);
 
   const setError = useCallback((text: string | null) => {
     setNotice(text ? { kind: 'error', text } : null);
+  }, []);
+
+  // Transient notice that auto-dismisses (used for capture/copy confirmations).
+  const noticeTimer = useRef<number | null>(null);
+  const showTransient = useCallback((n: Notice) => {
+    setNotice(n);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 1500);
   }, []);
 
   // ---- mpv status subscription ----
@@ -82,16 +95,45 @@ export default function App() {
     [addRecent, setError],
   );
 
+  const openFolder = useCallback(async () => {
+    try {
+      setError(null);
+      const r = await window.offcut.openFolder();
+      if (!r) return;
+      if (r.files.length === 0) {
+        setNotice({ kind: 'info', text: '이 폴더에 재생 가능한 영상이 없습니다' });
+        return;
+      }
+      usePlaylistStore.getState().setPlaylist(r.folder, r.files);
+      await openFile(r.files[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [openFile, setError]);
+
   const dragOver = useDragDrop(openFile, setError);
 
   const handleCapture = useCallback(async () => {
     try {
-      const r = await window.offcut.capture.now();
-      addCapture({ path: r.path, time: r.time, frame: r.frame });
+      const format = useSettingsStore.getState().captureFormat;
+      const r = await window.offcut.capture.now({ format });
+      addCapture({ videoPath: r.videoPath, path: r.path, time: r.time, frame: r.frame });
+      setCapturePulse((n) => n + 1);
+      showTransient({ kind: 'success', text: '📷 캡처됨' });
     } catch (e) {
       setError(`캡처 실패: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [addCapture, setError]);
+  }, [addCapture, setError, showTransient]);
+
+  const handleCopyFrame = useCallback(async () => {
+    try {
+      await window.offcut.capture.copyCurrent();
+      setCopyPulse((n) => n + 1);
+      showTransient({ kind: 'success', text: '📋 클립보드에 복사됨' });
+    } catch (e) {
+      setError(`복사 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [setError, showTransient]);
 
   const handleSetIn = useCallback(() => {
     setInPoint(usePlayerStore.getState().position);
@@ -147,8 +189,9 @@ export default function App() {
 
   const handleExportXmp = useCallback(async () => {
     const s = usePlayerStore.getState();
-    const captures = useCaptureStore.getState().captures;
     if (!s.filename) return;
+    // Only this video's captures become markers.
+    const captures = useCaptureStore.getState().captures.filter((c) => c.videoPath === s.filename);
     if (captures.length === 0) {
       setNotice({ kind: 'info', text: '내보낼 캡처가 없습니다. S 키로 먼저 캡처하세요.' });
       return;
@@ -171,6 +214,72 @@ export default function App() {
     }
   }, [setError]);
 
+  // ---- Video click interactions ----
+  // The mpv child window is click-through (setIgnoreMouseEvents), so these fire
+  // on the React video div beneath it. Single click toggles pause; a 200ms
+  // delay lets a double-click (→ fullscreen) cancel the pending pause toggle so
+  // the picture doesn't flicker.
+  const clickTimer = useRef<number | null>(null);
+
+  const handleVideoClick = useCallback(() => {
+    if (clickTimer.current !== null) return;
+    clickTimer.current = window.setTimeout(() => {
+      clickTimer.current = null;
+      window.offcut.mpv.command('togglePause');
+    }, 200);
+  }, []);
+
+  const handleVideoDoubleClick = useCallback(() => {
+    if (clickTimer.current !== null) {
+      clearTimeout(clickTimer.current);
+      clickTimer.current = null;
+    }
+    window.offcut.window.toggleFullscreen();
+  }, []);
+
+  const handleVideoContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const s = usePlayerStore.getState();
+    window.offcut.menu.showVideo({
+      paused: s.paused,
+      canExtract: s.inPoint !== null && s.outPoint !== null && s.outPoint > s.inPoint,
+    });
+  }, []);
+
+  // Dispatch native context-menu actions back to the existing handlers.
+  useEffect(() => {
+    return window.offcut.menu.onAction((action) => {
+      switch (action) {
+        case 'togglePause':
+        case 'frameStep':
+        case 'frameBackStep':
+          window.offcut.mpv.command(action);
+          break;
+        case 'capture':
+          handleCapture();
+          break;
+        case 'copyFrame':
+          handleCopyFrame();
+          break;
+        case 'setIn':
+          handleSetIn();
+          break;
+        case 'setOut':
+          handleSetOut();
+          break;
+        case 'extractClip':
+          handleExtractClip();
+          break;
+        case 'fullscreen':
+          window.offcut.window.toggleFullscreen();
+          break;
+        case 'open':
+          openFile();
+          break;
+      }
+    });
+  }, [handleCapture, handleCopyFrame, handleSetIn, handleSetOut, handleExtractClip, openFile]);
+
   // ---- Keyboard ----
   useKeyBindings({
     onOpenFile: () => openFile(),
@@ -192,9 +301,9 @@ export default function App() {
       className={`h-screen w-screen flex flex-col bg-bg-base text-white relative ${hideUI ? 'cursor-none' : ''}`}
     >
       <header
-        className={`h-12 flex items-center justify-between px-4 border-b border-white/5 shrink-0 transition-opacity duration-300 ${
+        className={`h-12 flex items-center justify-between px-4 border-b border-white/10 shrink-0 transition-opacity duration-300 ${
           hideUI ? 'opacity-0 pointer-events-none' : 'opacity-100'
-        } ${isFullscreen ? 'absolute top-0 left-0 right-0 z-30 bg-bg-base/80 backdrop-blur' : ''}`}
+        } ${isFullscreen ? 'absolute top-0 left-0 right-0 z-30 bg-bg-base/80 backdrop-blur' : 'bg-bg-surface'}`}
       >
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-accent" />
@@ -212,6 +321,13 @@ export default function App() {
             열기
           </button>
           <button
+            onClick={openFolder}
+            className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-white/10"
+            title="폴더 열기 — 폴더 안 영상들을 목록으로"
+          >
+            📁 폴더
+          </button>
+          <button
             onClick={() => setTranscodeOpen(true)}
             disabled={!filename}
             className="text-xs px-3 py-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed"
@@ -220,7 +336,21 @@ export default function App() {
             용량 ↓
           </button>
           <RecentFilesMenu onOpen={openFile} />
-          <AccentPicker />
+          <button
+            onClick={toggleSecret}
+            className={`text-xs px-2 py-1 rounded transition ${
+              secret
+                ? 'bg-accent/20 text-accent'
+                : 'bg-white/5 hover:bg-white/10 text-white/50'
+            }`}
+            title={
+              secret
+                ? '시크릿 모드 ON — 최근 기록을 남기지 않습니다 (클릭하여 끄기)'
+                : '시크릿 모드 OFF — 클릭하면 이후 연 영상을 기록하지 않습니다'
+            }
+          >
+            {secret ? '🕶 시크릿' : '🕶'}
+          </button>
         </div>
       </header>
 
@@ -229,11 +359,22 @@ export default function App() {
           {!filename ? (
             <StartScreen onOpenDialog={() => openFile()} onOpenFile={openFile} />
           ) : (
-            <div ref={videoAreaRef} className="absolute inset-0 bg-black" />
+            <div
+              ref={videoAreaRef}
+              className="absolute inset-0 bg-black"
+              onClick={handleVideoClick}
+              onDoubleClick={handleVideoDoubleClick}
+              onContextMenu={handleVideoContextMenu}
+            />
           )}
         </main>
         {!sideHidden && (
-          <SidePanel onPreviewCapture={setPreviewCapture} onExportXmp={handleExportXmp} />
+          <SidePanel
+            onPreviewCapture={setPreviewCapture}
+            onExportXmp={handleExportXmp}
+            onOpenFile={openFile}
+            onOpenFolder={openFolder}
+          />
         )}
       </div>
 
@@ -244,6 +385,9 @@ export default function App() {
       >
         <ControlBar
           onCapture={handleCapture}
+          onCopyFrame={handleCopyFrame}
+          capturePulse={capturePulse}
+          copyPulse={copyPulse}
           onTogglePanel={() => setPanelOpen((o) => !o)}
           panelOpen={panelOpen}
           onToggleLoopAB={handleToggleLoopAB}

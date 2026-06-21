@@ -13,6 +13,7 @@ declare global {
 
   interface CaptureResult {
     path: string;
+    videoPath: string;
     time: number;
     frame: number | null;
   }
@@ -79,6 +80,7 @@ declare global {
 
   interface OffcutAPI {
     openVideoDialog: () => Promise<string | null>;
+    openFolder: () => Promise<{ folder: string; files: string[] } | null>;
     chooseDirectory: (defaultPath?: string) => Promise<string | null>;
     saveFileDialog: (opts?: {
       title?: string;
@@ -93,7 +95,11 @@ declare global {
       onStatus: (handler: (status: MpvStatus) => void) => () => void;
     };
     capture: {
-      now: () => Promise<CaptureResult>;
+      now: (opts?: { format?: 'png' | 'jpg' }) => Promise<CaptureResult>;
+      copyCurrent: () => Promise<{ ok: boolean }>;
+      copyFile: (path: string) => Promise<{ ok: boolean }>;
+      startDrag: (path: string) => Promise<void>;
+      saveImage: (dataUrl: string, outPath: string) => Promise<{ path: string }>;
       getDir: () => Promise<string>;
       setDir: (dir: string) => Promise<string | null>;
       reveal: (path: string) => Promise<unknown>;
@@ -116,6 +122,10 @@ declare global {
       toggleFullscreen: () => Promise<boolean>;
       isFullscreen: () => Promise<boolean>;
       onFullscreenChange: (handler: (value: boolean) => void) => () => void;
+    };
+    menu: {
+      showVideo: (ctx: { paused: boolean; canExtract: boolean }) => Promise<void>;
+      onAction: (handler: (action: string) => void) => () => void;
     };
     markers: {
       exportXmp: (params: {
@@ -140,6 +150,13 @@ declare global {
         height?: number;
         rgb?: string;
       }) => Promise<string>;
+      overlayShow: (params: {
+        dataUrl: string;
+        label: string;
+        centerX: number;
+        bottomY: number;
+      }) => Promise<void>;
+      overlayHide: () => Promise<void>;
     };
     shell: {
       openPath: (path: string) => Promise<string>;

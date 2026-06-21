@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('offcut', {
   openVideoDialog: () => ipcRenderer.invoke('dialog:openVideo'),
+  openFolder: () => ipcRenderer.invoke('folder:open'),
   chooseDirectory: (defaultPath) => ipcRenderer.invoke('dialog:chooseDirectory', defaultPath),
   saveFileDialog: (opts) => ipcRenderer.invoke('dialog:saveFile', opts),
   mpv: {
@@ -16,7 +17,11 @@ contextBridge.exposeInMainWorld('offcut', {
     },
   },
   capture: {
-    now: () => ipcRenderer.invoke('capture:now'),
+    now: (opts) => ipcRenderer.invoke('capture:now', opts),
+    copyCurrent: () => ipcRenderer.invoke('capture:copyCurrent'),
+    copyFile: (p) => ipcRenderer.invoke('capture:copyFile', p),
+    startDrag: (p) => ipcRenderer.invoke('capture:startDrag', p),
+    saveImage: (dataUrl, outPath) => ipcRenderer.invoke('capture:saveImage', dataUrl, outPath),
     getDir: () => ipcRenderer.invoke('capture:getDir'),
     setDir: (dir) => ipcRenderer.invoke('capture:setDir', dir),
     reveal: (p) => ipcRenderer.invoke('capture:reveal', p),
@@ -48,6 +53,14 @@ contextBridge.exposeInMainWorld('offcut', {
       return () => ipcRenderer.removeListener('window:fullscreen', listener);
     },
   },
+  menu: {
+    showVideo: (ctx) => ipcRenderer.invoke('window:showVideoMenu', ctx),
+    onAction: (handler) => {
+      const listener = (_e, action) => handler(action);
+      ipcRenderer.on('menu:action', listener);
+      return () => ipcRenderer.removeListener('menu:action', listener);
+    },
+  },
   markers: {
     exportXmp: (params) => ipcRenderer.invoke('markers:exportXmp', params),
   },
@@ -57,6 +70,8 @@ contextBridge.exposeInMainWorld('offcut', {
   preview: {
     thumbnail: (params) => ipcRenderer.invoke('preview:thumbnail', params),
     waveform: (params) => ipcRenderer.invoke('preview:waveform', params),
+    overlayShow: (params) => ipcRenderer.invoke('preview:overlayShow', params),
+    overlayHide: () => ipcRenderer.invoke('preview:overlayHide'),
   },
   shell: {
     openPath: (p) => ipcRenderer.invoke('shell:openPath', p),

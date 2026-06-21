@@ -52,6 +52,21 @@ const ALLOWED_INPUT_EXTS = new Set([
   '.mp3', '.aac', '.m4a', '.wav', '.flac', '.opus', '.ogg',
 ]);
 
+// List the playable video files directly inside a folder (non-recursive),
+// sorted naturally (so "2" sorts before "10"). Used by the folder/playlist view.
+function listVideoFiles(dir) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((e) => e.isFile() && ALLOWED_INPUT_EXTS.has(path.extname(e.name).toLowerCase()))
+    .map((e) => path.join(dir, e.name))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+}
+
 // Validate a media input path before handing it to ffmpeg/ffprobe: it must be a
 // real, existing regular file with an allowed extension. Throws on failure.
 function validateMediaInput(input) {
@@ -96,6 +111,7 @@ function captureFrameWithFfmpeg(ffmpegBin, input, timeSeconds, output) {
   return new Promise((resolve, reject) => {
     const t = Math.max(0, Number(timeSeconds) || 0);
     const safeInput = validateMediaInput(input);
+    const isJpg = /\.jpe?g$/i.test(output);
     const args = [
       '-y',
       '-loglevel', 'error',
@@ -103,6 +119,8 @@ function captureFrameWithFfmpeg(ffmpegBin, input, timeSeconds, output) {
       '-ss', t.toFixed(3),
       '-i', safeInput,
       '-vframes', '1',
+      // High-quality JPEG when the output is .jpg; PNG ignores -q:v.
+      ...(isJpg ? ['-q:v', '2'] : []),
       output,
     ];
     const proc = spawn(ffmpegBin, args, { windowsHide: true });
@@ -114,6 +132,20 @@ function captureFrameWithFfmpeg(ffmpegBin, input, timeSeconds, output) {
       else reject(new Error(`ffmpeg capture exited ${code}: ${stderr.trim().slice(-200)}`));
     });
   });
+}
+
+// Return a path that doesn't collide with an existing file by appending
+// _2, _3, … before the extension. Prevents same-timestamp captures from
+// silently overwriting each other.
+function uniquePath(targetPath) {
+  if (!fs.existsSync(targetPath)) return targetPath;
+  const ext = path.extname(targetPath);
+  const base = targetPath.slice(0, -ext.length || undefined);
+  for (let i = 2; i < 1000; i++) {
+    const candidate = `${base}_${i}${ext}`;
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  return targetPath;
 }
 
 // Small JPEG thumbnail for seekbar hover preview. Outputs to memory via pipe
@@ -198,6 +230,8 @@ module.exports = {
   sanitizeBasename,
   getHwnd,
   validateMediaInput,
+  listVideoFiles,
+  uniquePath,
   FF_PROTOCOL_WHITELIST,
   isPathInsideCaptureDir,
   captureFrameWithFfmpeg,
