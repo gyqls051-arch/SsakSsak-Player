@@ -32,7 +32,7 @@ export default function StartScreen({ onOpenDialog, onOpenFile }: Props) {
           <div className="text-center space-y-4">
             <div className="inline-flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-accent" />
-              <span className="text-xl font-semibold tracking-wide">OFFCUT PLAYER</span>
+              <span className="text-xl font-semibold tracking-wide">싹싹김치 플레이어</span>
             </div>
             <p className="text-sm text-white/50">영상 파일을 열거나 끌어다 놓으세요</p>
             <button

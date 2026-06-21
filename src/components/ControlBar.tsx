@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from '../store/playerStore';
 import { useCaptureStore } from '../store/captureStore';
+import { useNotesStore } from '../store/notesStore';
 import { SPEED_STEPS } from '../hooks/useKeyBindings';
 import { formatTime } from '../utils/format';
 import { useSeekThumbnail } from '../hooks/useSeekThumbnail';
@@ -65,6 +66,8 @@ export default function ControlBar({
   const allCaptures = useCaptureStore((s) => s.captures);
   // Only this video's captures appear as seekbar markers.
   const captures = filename ? allCaptures.filter((c) => c.videoPath === filename) : [];
+  const allNotes = useNotesStore((s) => s.notes);
+  const notes = filename ? allNotes.filter((n) => n.videoPath === filename) : [];
   const seekRef = useRef<HTMLDivElement>(null);
 
   const [dragTime, setDragTime] = useState<number | null>(null);
@@ -280,6 +283,22 @@ export default function ControlBar({
                   className="absolute top-1/2 -translate-y-1/2 w-0.5 h-4 bg-yellow-400 hover:w-1 hover:bg-yellow-300 transition-all cursor-pointer"
                   style={{ left: `${left}%` }}
                   title={`캡처: ${formatTime(c.time)}`}
+                />
+              );
+            })}
+          {duration > 0 &&
+            notes.map((n) => {
+              const left = Math.min(100, Math.max(0, (n.time / duration) * 100));
+              return (
+                <div
+                  key={n.id}
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    seekTo(n.time);
+                  }}
+                  className="absolute -top-1 -translate-x-1/2 w-2 h-2 rotate-45 bg-sky-400 hover:bg-sky-300 transition-colors cursor-pointer"
+                  style={{ left: `${left}%` }}
+                  title={`메모: ${n.text || formatTime(n.time)}`}
                 />
               );
             })}

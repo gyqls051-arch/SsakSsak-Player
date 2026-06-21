@@ -22,7 +22,7 @@ SOFTWARE.
 
 ---
 
-This license (MIT) applies to the source code of OFFCUT Player only.
+This license (MIT) applies to the source code of 싹싹김치 플레이어 only.
 The distributed installer additionally bundles mpv (GPLv2+) and FFmpeg
 (GPLv3, built with --enable-gpl --enable-version3) as separate executables
 invoked via IPC / child processes (mere aggregation). Those bundled binaries

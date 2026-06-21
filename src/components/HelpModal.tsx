@@ -39,9 +39,10 @@ const SECTIONS: Array<{ title: string; items: Array<[string, string]> }> = [
     ],
   },
   {
-    title: '캡처 · 마커',
+    title: '캡처 · 메모 · 마커',
     items: [
-      ['S · Ctrl+E', '현재 프레임 캡처 (PNG)'],
+      ['S · Ctrl+E', '현재 프레임 캡처 (PNG/JPG)'],
+      ['N', '현재 위치에 메모 추가'],
       ['I · R', '구간 시작점 (In)'],
       ['O · T', '구간 끝점 (Out)'],
       ['Ctrl+R', 'A-B 구간 반복 토글'],

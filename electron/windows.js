@@ -203,7 +203,7 @@ async function createMainWindow() {
     minWidth: 720,
     minHeight: 480,
     backgroundColor: '#0a0a0a',
-    title: 'OFFCUT Player',
+    title: '싹싹김치 플레이어',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

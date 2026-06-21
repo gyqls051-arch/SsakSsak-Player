@@ -22,6 +22,7 @@ interface Opts {
   onToggleLoopAB: () => void;
   onClearAB: () => void;
   onExtractClip: () => void;
+  onAddNote: () => void;
 }
 
 /**
@@ -158,6 +159,10 @@ export function useKeyBindings(opts: Opts) {
         case 'KeyM':
           e.preventDefault();
           cmd('mute');
+          return;
+        case 'KeyN':
+          e.preventDefault();
+          optsRef.current.onAddNote();
           return;
         case 'KeyS':
           e.preventDefault();

@@ -65,7 +65,7 @@ class MpvController {
     if (this.opts.wid) {
       args.push(`--wid=${this.opts.wid}`);
     } else {
-      args.push('--force-window=yes', '--title=OFFCUT Player — Video');
+      args.push('--force-window=yes', '--title=싹싹김치 플레이어 — Video');
     }
     this.mpv = new NodeMpv(
       {

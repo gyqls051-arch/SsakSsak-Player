@@ -134,6 +134,9 @@ declare global {
         fps: number;
       }) => Promise<string>;
     };
+    notes: {
+      exportText: (content: string, outPath: string) => Promise<{ path: string }>;
+    };
     clip: {
       extract: (params: {
         input: string;

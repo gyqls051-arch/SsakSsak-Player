@@ -14,7 +14,7 @@ function resolveBinary(name) {
 
 function getCaptureDir() {
   if (state.captureDir && fs.existsSync(state.captureDir)) return state.captureDir;
-  state.captureDir = path.join(app.getPath('pictures'), 'OFFCUT Player');
+  state.captureDir = path.join(app.getPath('pictures'), '싹싹김치 플레이어');
   fs.mkdirSync(state.captureDir, { recursive: true });
   return state.captureDir;
 }

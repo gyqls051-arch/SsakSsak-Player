@@ -1,10 +1,10 @@
 # Third-Party Licenses
 
-OFFCUT Player의 인스톨러 배포물에는 아래 제3자 소프트웨어가 포함됩니다.
+싹싹김치 플레이어의 인스톨러 배포물에는 아래 제3자 소프트웨어가 포함됩니다.
 본 앱의 소스 코드는 [MIT 라이선스](LICENSE)이며, 아래 컴포넌트들은 각자의 라이선스 조건에 따릅니다.
 
 > **중요**: 번들된 ffmpeg는 **GPLv3**(`--enable-gpl --enable-version3`), mpv는 **GPLv2+** 입니다.
-> 이들을 함께 담은 인스톨러(`OFFCUT Player Setup X.X.X.exe`)의 GPL 컴포넌트 부분은
+> 이들을 함께 담은 인스톨러(`싹싹김치 플레이어 Setup X.X.X.exe`)의 GPL 컴포넌트 부분은
 > 보수적으로 **GPLv3 의무를 따른다**고 명시합니다.
 > 본 앱 자체 코드는 MIT이며, mpv·ffmpeg를 **별도 프로세스로 호출(단순 집합 / mere aggregation)** 하므로
 > 본 앱 소스 공개 의무는 전염되지 않습니다. 의무 이행 방법은 아래 [GPL 의무 사항 충족 안내](#gpl-의무-사항-충족-안내) 참고.
@@ -131,7 +131,7 @@ Electron에 번들된 Chromium은 다음 라이선스를 따릅니다:
 3. **ffmpeg 대응 소스**: https://github.com/FFmpeg/FFmpeg/tree/b2867481d9
    (빌드 스크립트: https://github.com/BtbN/FFmpeg-Builds )
 4. **LICENSE (MIT, 본 앱 소스용)**
-5. (선택) `OFFCUT Player Setup X.X.X.exe` 또는 동등한 형태의 빌드 산출물
+5. (선택) `싹싹김치 플레이어 Setup X.X.X.exe` 또는 동등한 형태의 빌드 산출물
 
 이 모든 정보는 GitHub Releases 페이지에서 함께 제공됩니다.
 
@@ -140,7 +140,7 @@ Electron에 번들된 Chromium은 다음 라이선스를 따릅니다:
 
 ### 서면 제공 오퍼 (Written Offer — GPLv3 §6 / GPLv2 §3)
 
-OFFCUT Player 배포자는, 본 인스톨러를 수령한 모든 제3자에게 배포일로부터 **최소 3년간**, 번들된 mpv 및
+싹싹김치 플레이어 배포자는, 본 인스톨러를 수령한 모든 제3자에게 배포일로부터 **최소 3년간**, 번들된 mpv 및
 FFmpeg 바이너리에 **대응하는 완전한 소스 코드**를 (a) 위 공개 저장소 링크를 통해 무상으로, 또는 (b) 요청 시
 물리적 매체·전송에 드는 실비 이하의 비용으로 제공합니다. 소스 코드 요청은
 [Issues](https://github.com/rlagyqls051-create/OFFCUT_Play/issues/new) 또는 배포 페이지에 명시된 연락처로

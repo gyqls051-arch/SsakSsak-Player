@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from './store/playerStore';
 import { useSettingsStore } from './store/settingsStore';
 import { usePlaylistStore } from './store/playlistStore';
+import { useNotesStore, type Note } from './store/notesStore';
+import type { NoteExportFormat } from './components/NotesTab';
 import { useCaptureStore, type Capture } from './store/captureStore';
 import ControlBar from './components/ControlBar';
 import RecentFilesMenu from './components/RecentFilesMenu';
@@ -18,11 +20,45 @@ import { useABLoopSync } from './hooks/useABLoopSync';
 import { useFfprobeOnFile } from './hooks/useFfprobeOnFile';
 import { useFullscreenSync } from './hooks/useFullscreenSync';
 import { useDragDrop } from './hooks/useDragDrop';
-import { evalRate, formatTimeForFilename } from './utils/format';
+import { evalRate, formatTime, formatTimeForFilename } from './utils/format';
 
 function basename(p: string | null) {
   if (!p) return '파일이 열려있지 않습니다';
   return p.split(/[\\/]/).pop() ?? p;
+}
+
+function srtTimecode(sec: number): string {
+  const s = Math.max(0, sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = Math.floor(s % 60);
+  const ms = Math.floor((s % 1) * 1000);
+  const p = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${p(h)}:${p(m)}:${p(ss)},${p(ms, 3)}`;
+}
+
+// Build the export payload for text-based note formats (txt / csv / srt).
+function buildNotesContent(format: NoteExportFormat, notes: Note[]): string {
+  if (format === 'csv') {
+    const rows = ['time_sec,timecode,frame,note'];
+    for (const n of notes) {
+      const text = (n.text || '').replace(/"/g, '""');
+      rows.push(`${n.time.toFixed(3)},${formatTime(n.time)},${n.frame ?? ''},"${text}"`);
+    }
+    return rows.join('\r\n');
+  }
+  if (format === 'srt') {
+    return notes
+      .map(
+        (n, i) =>
+          `${i + 1}\n${srtTimecode(n.time)} --> ${srtTimecode(n.time + 3)}\n${n.text || '메모'}\n`,
+      )
+      .join('\n');
+  }
+  // txt
+  return notes
+    .map((n) => `[${formatTime(n.time)}${n.frame != null ? ` / ${n.frame}f` : ''}] ${n.text || ''}`)
+    .join('\r\n');
 }
 
 type Notice = { kind: 'error' | 'info' | 'success'; text: string };
@@ -246,6 +282,56 @@ export default function App() {
     }
   }, [setError]);
 
+  const handleAddNote = useCallback(() => {
+    const s = usePlayerStore.getState();
+    if (!s.filename) return;
+    const v = s.ffprobe?.streams.find((x) => x.codec_type === 'video');
+    const fps = (v && (evalRate(v.r_frame_rate) || evalRate(v.avg_frame_rate))) || 0;
+    const frame = fps > 0 ? Math.round(s.position * fps) : null;
+    useNotesStore.getState().add({ videoPath: s.filename, time: s.position, frame, text: '' });
+    setPanelOpen(true);
+  }, []);
+
+  const handleExportNotes = useCallback(
+    async (format: NoteExportFormat) => {
+      const s = usePlayerStore.getState();
+      if (!s.filename) return;
+      const notes = useNotesStore.getState().notes.filter((n) => n.videoPath === s.filename);
+      if (notes.length === 0) {
+        setNotice({ kind: 'info', text: '내보낼 메모가 없습니다.' });
+        return;
+      }
+      const v = s.ffprobe?.streams.find((x) => x.codec_type === 'video');
+      const fps = (v && (evalRate(v.r_frame_rate) || evalRate(v.avg_frame_rate))) || 30;
+      try {
+        if (format === 'xmp') {
+          const xmpPath = await window.offcut.markers.exportXmp({
+            videoPath: s.filename,
+            captures: notes.map((n) => ({ time: n.time, name: n.text || '메모' })),
+            fps,
+          });
+          setNotice({
+            kind: 'success',
+            text: `🎬 XMP 저장: ${xmpPath.split(/[\\/]/).pop()}\nPremiere/AE import 시 마커로 인식됩니다.`,
+          });
+          return;
+        }
+        const baseName = s.filename.replace(/\.[^.]+$/, '').split(/[\\/]/).pop() ?? 'notes';
+        const out = await window.offcut.saveFileDialog({
+          title: '메모 내보내기',
+          defaultPath: `${baseName}_메모.${format}`,
+          filters: [{ name: format.toUpperCase(), extensions: [format] }],
+        });
+        if (!out) return;
+        await window.offcut.notes.exportText(buildNotesContent(format, notes), out);
+        setNotice({ kind: 'success', text: `📝 저장됨: ${out.split(/[\\/]/).pop()}` });
+      } catch (e) {
+        setError(`메모 내보내기 실패: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [setError],
+  );
+
   // ---- Video click interactions ----
   // The mpv child window is click-through (setIgnoreMouseEvents), so these fire
   // on the React video div beneath it. Single click toggles pause; a 200ms
@@ -333,6 +419,7 @@ export default function App() {
     onToggleLoopAB: handleToggleLoopAB,
     onClearAB: handleClearAB,
     onExtractClip: handleExtractClip,
+    onAddNote: handleAddNote,
   });
 
   // ---- Render ----
@@ -350,7 +437,7 @@ export default function App() {
       >
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-accent" />
-          <span className="text-sm font-semibold tracking-wide">OFFCUT PLAYER</span>
+          <span className="text-sm font-semibold tracking-wide">싹싹김치 플레이어</span>
         </div>
         <div className="text-xs text-white/40 truncate max-w-[40%]" title={filename ?? ''}>
           {basename(filename)}
@@ -417,6 +504,8 @@ export default function App() {
             onExportXmp={handleExportXmp}
             onOpenFile={openFile}
             onOpenFolder={openFolder}
+            onAddNote={handleAddNote}
+            onExportNotes={handleExportNotes}
           />
         )}
       </div>

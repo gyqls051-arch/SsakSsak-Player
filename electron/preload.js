@@ -64,6 +64,9 @@ contextBridge.exposeInMainWorld('offcut', {
   markers: {
     exportXmp: (params) => ipcRenderer.invoke('markers:exportXmp', params),
   },
+  notes: {
+    exportText: (content, outPath) => ipcRenderer.invoke('notes:exportText', content, outPath),
+  },
   clip: {
     extract: (params) => ipcRenderer.invoke('clip:extract', params),
     export: (params) => ipcRenderer.invoke('clip:export', params),

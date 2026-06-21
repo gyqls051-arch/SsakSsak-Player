@@ -361,6 +361,21 @@ function registerIpc() {
     return xmpPath;
   });
 
+  // ---------- Notes export (text formats) ----------
+  ipcMain.handle('notes:exportText', async (_evt, content, outPath) => {
+    if (typeof content !== 'string') throw new Error('내보낼 내용이 없습니다');
+    if (!outPath || typeof outPath !== 'string') throw new Error('출력 경로가 없습니다');
+    if (outPath.includes('..')) throw new Error('잘못된 출력 경로입니다');
+    const resolved = path.resolve(outPath);
+    const ext = path.extname(resolved).toLowerCase();
+    if (!['.txt', '.csv', '.srt', '.md'].includes(ext)) {
+      throw new Error(`허용되지 않은 형식입니다: ${ext || '(확장자 없음)'}`);
+    }
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    await fs.promises.writeFile(resolved, content, 'utf8');
+    return { path: resolved };
+  });
+
   // ---------- Lossless clip extract ----------
   ipcMain.handle('clip:extract', async (_evt, params) => {
     const ffmpegBin = resolveBinary('ffmpeg.exe');

@@ -31,14 +31,14 @@ function buildXmpMarkers(captures, fps) {
     .join('\n');
 
   return `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="OFFCUT Player">
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="싹싹김치 플레이어">
    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
       <rdf:Description rdf:about=""
             xmlns:xmpDM="http://ns.adobe.com/xmp/1.0/DynamicMedia/">
          <xmpDM:Tracks>
             <rdf:Bag>
                <rdf:li rdf:parseType="Resource">
-                  <xmpDM:trackName>OFFCUT Markers</xmpDM:trackName>
+                  <xmpDM:trackName>싹싹김치 마커</xmpDM:trackName>
                   <xmpDM:trackType>Cue</xmpDM:trackType>
                   <xmpDM:frameRate>f${fpsStr}</xmpDM:frameRate>
                   <xmpDM:markers>

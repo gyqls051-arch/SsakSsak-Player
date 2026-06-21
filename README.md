@@ -1,4 +1,4 @@
-# OFFCUT Player
+# 싹싹김치 플레이어
 
 > 영상 편집자를 위한 가벼운 데스크톱 플레이어 · 프리뷰 도구 (Windows)
 >
@@ -65,7 +65,7 @@ npm run electron:build # 인스톨러(NSIS) 빌드 → release/
 
 이 프로젝트는 **이중 라이선스 구조**입니다.
 
-- **OFFCUT Player 소스 코드 → [MIT](LICENSE)**
+- **싹싹김치 플레이어 소스 코드 → [MIT](LICENSE)**
 - **배포 인스톨러 → mpv(GPLv2+) · FFmpeg(GPLv3) 바이너리를 번들**
 
 mpv·ffmpeg는 앱에 링크되지 않고 **별도 프로세스(IPC / child process)로 호출**되므로(단순 집합, mere
