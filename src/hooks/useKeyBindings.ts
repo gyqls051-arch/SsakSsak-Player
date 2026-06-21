@@ -70,11 +70,11 @@ export function useKeyBindings(opts: Opts) {
             return;
           case 'ArrowLeft':
             e.preventDefault();
-            window.offcut.mpv.command('frameBackStep');
+            window.offcut.mpv.command('seek', -5, 'relative');
             return;
           case 'ArrowRight':
             e.preventDefault();
-            window.offcut.mpv.command('frameStep');
+            window.offcut.mpv.command('seek', 5, 'relative');
             return;
         }
         return;
@@ -116,11 +116,13 @@ export function useKeyBindings(opts: Opts) {
           return;
         case 'ArrowLeft':
           e.preventDefault();
-          cmd('seek', shift ? -1 : -5, 'relative');
+          if (shift) cmd('seek', -1, 'relative');
+          else cmd('frameBackStep');
           return;
         case 'ArrowRight':
           e.preventDefault();
-          cmd('seek', shift ? 1 : 5, 'relative');
+          if (shift) cmd('seek', 1, 'relative');
+          else cmd('frameStep');
           return;
         case 'ArrowUp':
           e.preventDefault();

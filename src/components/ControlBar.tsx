@@ -318,10 +318,14 @@ export default function ControlBar({
 
       <div className="flex items-center gap-1.5">
         <button
-          onClick={() => window.offcut.mpv.command('frameBackStep')}
+          onClick={(e) =>
+            e.ctrlKey
+              ? window.offcut.mpv.command('seek', -5, 'relative')
+              : window.offcut.mpv.command('frameBackStep')
+          }
           disabled={disabled}
           className="ctrl-btn text-[10px] font-bold tracking-tight"
-          title="이전 프레임 (,)"
+          title="이전 프레임 (← / ,) · Ctrl+클릭: 5초 뒤로"
         >
           ◀1
         </button>
@@ -334,10 +338,14 @@ export default function ControlBar({
           {paused ? '▶' : '❚❚'}
         </button>
         <button
-          onClick={() => window.offcut.mpv.command('frameStep')}
+          onClick={(e) =>
+            e.ctrlKey
+              ? window.offcut.mpv.command('seek', 5, 'relative')
+              : window.offcut.mpv.command('frameStep')
+          }
           disabled={disabled}
           className="ctrl-btn text-[10px] font-bold tracking-tight"
-          title="다음 프레임 (.)"
+          title="다음 프레임 (→ / .) · Ctrl+클릭: 5초 앞으로"
         >
           1▶
         </button>
