@@ -12,6 +12,7 @@ import TranscodeModal from './components/TranscodeModal';
 import HelpModal from './components/HelpModal';
 import CapturePreviewModal from './components/CapturePreviewModal';
 import StartScreen from './components/StartScreen';
+import ExitAdModal from './components/ExitAdModal';
 import { useKeyBindings } from './hooks/useKeyBindings';
 import { useRecentFiles } from './hooks/useRecentFiles';
 import { useAutoHideUI } from './hooks/useAutoHideUI';
@@ -87,6 +88,7 @@ export default function App() {
   const [transcodeOpen, setTranscodeOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [previewCapture, setPreviewCapture] = useState<Capture | null>(null);
+  const [exitAdOpen, setExitAdOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [capturePulse, setCapturePulse] = useState(0);
   const [copyPulse, setCopyPulse] = useState(0);
@@ -106,13 +108,16 @@ export default function App() {
   // ---- mpv status subscription ----
   useEffect(() => window.offcut.mpv.onStatus(setStatus), [setStatus]);
 
+  // ---- Exit popup (self-promo) before the window closes ----
+  useEffect(() => window.offcut.app.onExitAd(() => setExitAdOpen(true)), []);
+
   // ---- Hooks (effects) ----
   const isFullscreen = useFullscreenSync();
   const uiVisible = useAutoHideUI(filename, paused);
   useABLoopSync(filename, loopAB, inPoint, outPoint);
   useFfprobeOnFile(filename, setError);
 
-  const overlayOpen = transcodeOpen || helpOpen || previewCapture !== null;
+  const overlayOpen = transcodeOpen || helpOpen || previewCapture !== null || exitAdOpen;
   const videoAreaRef = useVideoEmbed(filename, overlayOpen, `${panelOpen}-${isFullscreen}`);
 
   // ---- Handlers ----
@@ -569,6 +574,7 @@ export default function App() {
         onClose={() => setPreviewCapture(null)}
         onRevealInFolder={(p) => window.offcut.capture.reveal(p)}
       />
+      <ExitAdModal open={exitAdOpen} onClose={() => setExitAdOpen(false)} />
     </div>
   );
 }

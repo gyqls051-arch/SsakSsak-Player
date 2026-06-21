@@ -169,6 +169,11 @@ declare global {
     };
     shell: {
       openPath: (path: string) => Promise<string>;
+      openExternal: (url: string) => Promise<void>;
+    };
+    app: {
+      confirmQuit: () => Promise<void>;
+      onExitAd: (handler: () => void) => () => void;
     };
     files: {
       pathForFile: (file: File) => string | null;

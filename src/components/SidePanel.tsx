@@ -3,6 +3,8 @@ import InfoTab from './InfoTab';
 import CapturesTab from './CapturesTab';
 import FolderTab from './FolderTab';
 import NotesTab, { type NoteExportFormat } from './NotesTab';
+import PromoBanner from './PromoBanner';
+import { PROMOS } from '../data/promos';
 import { useCaptureStore, type Capture } from '../store/captureStore';
 import { usePlaylistStore } from '../store/playlistStore';
 import { usePlayerStore } from '../store/playerStore';
@@ -28,6 +30,7 @@ export default function SidePanel({
   onExportNotes,
 }: Props) {
   const [tab, setTab] = useState<Tab>('info');
+  const [promoIdx] = useState(() => Math.floor(Math.random() * PROMOS.length));
   const filename = usePlayerStore((s) => s.filename);
   const captureCount = useCaptureStore(
     (s) => s.captures.filter((c) => c.videoPath === filename).length,
@@ -76,6 +79,9 @@ export default function SidePanel({
           <CapturesTab onPreview={onPreviewCapture} onExportXmp={onExportXmp} />
         )}
         {tab === 'folder' && <FolderTab onOpen={onOpenFile} onOpenFolder={onOpenFolder} />}
+      </div>
+      <div className="border-t border-white/10 p-2 shrink-0">
+        <PromoBanner promo={PROMOS[promoIdx]} />
       </div>
     </aside>
   );

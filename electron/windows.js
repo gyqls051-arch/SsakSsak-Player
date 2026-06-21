@@ -258,6 +258,16 @@ async function createMainWindow() {
     await state.mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  // Show the self-promo exit popup before actually closing. Once the user
+  // confirms (app:confirmQuit sets state.exitConfirmed), the close goes through.
+  state.mainWindow.on('close', (e) => {
+    if (state.exitConfirmed) return;
+    e.preventDefault();
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+      state.mainWindow.webContents.send('app:exit-ad');
+    }
+  });
+
   state.mainWindow.on('closed', () => {
     state.mainWindow = null;
     if (state.previewWindow && !state.previewWindow.isDestroyed()) {

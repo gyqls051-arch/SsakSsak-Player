@@ -79,6 +79,15 @@ contextBridge.exposeInMainWorld('offcut', {
   },
   shell: {
     openPath: (p) => ipcRenderer.invoke('shell:openPath', p),
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  },
+  app: {
+    confirmQuit: () => ipcRenderer.invoke('app:confirmQuit'),
+    onExitAd: (handler) => {
+      const listener = () => handler();
+      ipcRenderer.on('app:exit-ad', listener);
+      return () => ipcRenderer.removeListener('app:exit-ad', listener);
+    },
   },
   files: {
     pathForFile: (file) => {

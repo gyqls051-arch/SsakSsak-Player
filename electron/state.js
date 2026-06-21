@@ -20,4 +20,7 @@ module.exports = {
   lastVideoBounds: null,
   /** Whether a UI overlay (modal etc.) is currently open in the renderer. */
   overlayActive: false,
+  /** Set true once the user confirms quit in the exit popup, so the next
+   *  window 'close' is allowed through instead of re-showing the popup. */
+  exitConfirmed: false,
 };

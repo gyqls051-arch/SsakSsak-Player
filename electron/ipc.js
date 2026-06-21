@@ -492,6 +492,18 @@ function registerIpc() {
 
   // ---------- Shell ----------
   ipcMain.handle('shell:openPath', async (_evt, p) => shell.openPath(p));
+  ipcMain.handle('shell:openExternal', async (_evt, url) => {
+    // Only allow web links — never arbitrary schemes via this bridge.
+    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
+      await shell.openExternal(url);
+    }
+  });
+
+  // ---------- App lifecycle ----------
+  ipcMain.handle('app:confirmQuit', () => {
+    state.exitConfirmed = true;
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.close();
+  });
 }
 
 module.exports = { registerIpc, registerProtocols };
