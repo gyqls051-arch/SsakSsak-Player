@@ -523,6 +523,7 @@ export default function App() {
         <ControlBar
           onCapture={handleCapture}
           onCopyFrame={handleCopyFrame}
+          onAddNote={handleAddNote}
           capturePulse={capturePulse}
           copyPulse={copyPulse}
           onTogglePanel={() => setPanelOpen((o) => !o)}

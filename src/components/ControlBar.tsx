@@ -29,6 +29,7 @@ function sensitivityFromDistance(distancePx: number): number {
 interface Props {
   onCapture: () => void;
   onCopyFrame: () => void;
+  onAddNote: () => void;
   capturePulse: number;
   copyPulse: number;
   onTogglePanel: () => void;
@@ -42,6 +43,7 @@ interface Props {
 export default function ControlBar({
   onCapture,
   onCopyFrame,
+  onAddNote,
   capturePulse,
   copyPulse,
   onTogglePanel,
@@ -372,6 +374,14 @@ export default function ControlBar({
           title="현재 프레임 클립보드 복사"
         >
           📋
+        </button>
+        <button
+          onClick={onAddNote}
+          disabled={disabled}
+          className="ctrl-btn"
+          title="현재 위치에 메모 / 주석 (N)"
+        >
+          📝
         </button>
 
         <button
