@@ -244,11 +244,13 @@ async function createMainWindow() {
   });
   state.mainWindow.on('enter-full-screen', () => {
     state.mainWindow?.webContents.send('window:fullscreen', true);
-    setTimeout(syncVideoBounds, 120);
+    syncVideoBounds();
+    setTimeout(syncVideoBounds, 60);
   });
   state.mainWindow.on('leave-full-screen', () => {
     state.mainWindow?.webContents.send('window:fullscreen', false);
-    setTimeout(syncVideoBounds, 120);
+    syncVideoBounds();
+    setTimeout(syncVideoBounds, 60);
   });
 
   if (isDev) {

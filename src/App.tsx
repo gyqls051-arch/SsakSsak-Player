@@ -372,6 +372,24 @@ export default function App() {
   // Dispatch native context-menu actions back to the existing handlers.
   useEffect(() => {
     return window.offcut.menu.onAction((action) => {
+      if (action.startsWith('audio:')) {
+        window.offcut.mpv.command('setAudio', Number(action.slice(6)));
+        return;
+      }
+      if (action === 'sub:no') {
+        window.offcut.mpv.command('setSub', 'no');
+        return;
+      }
+      if (action.startsWith('sub:')) {
+        window.offcut.mpv.command('setSub', Number(action.slice(4)));
+        return;
+      }
+      if (action === 'loadSub') {
+        window.offcut.openSubtitle().then((p) => {
+          if (p) window.offcut.mpv.command('addSub', p);
+        });
+        return;
+      }
       switch (action) {
         case 'togglePause':
         case 'frameStep':
@@ -383,6 +401,9 @@ export default function App() {
           break;
         case 'copyFrame':
           handleCopyFrame();
+          break;
+        case 'addNote':
+          handleAddNote();
           break;
         case 'setIn':
           handleSetIn();
@@ -407,6 +428,7 @@ export default function App() {
   }, [
     handleCapture,
     handleCopyFrame,
+    handleAddNote,
     handleSetIn,
     handleSetOut,
     handleExtractClip,

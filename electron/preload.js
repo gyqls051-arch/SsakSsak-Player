@@ -2,12 +2,14 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('offcut', {
   openVideoDialog: () => ipcRenderer.invoke('dialog:openVideo'),
+  openSubtitle: () => ipcRenderer.invoke('dialog:openSubtitle'),
   openFolder: () => ipcRenderer.invoke('folder:open'),
   chooseDirectory: (defaultPath) => ipcRenderer.invoke('dialog:chooseDirectory', defaultPath),
   saveFileDialog: (opts) => ipcRenderer.invoke('dialog:saveFile', opts),
   mpv: {
     open: (filePath) => ipcRenderer.invoke('mpv:open', filePath),
     command: (cmd, ...args) => ipcRenderer.invoke('mpv:command', cmd, ...args),
+    getTracks: () => ipcRenderer.invoke('mpv:getTracks'),
     setProperty: (name, value) => ipcRenderer.invoke('mpv:setProperty', name, value),
     getProperty: (name) => ipcRenderer.invoke('mpv:getProperty', name),
     onStatus: (handler) => {

@@ -80,6 +80,7 @@ declare global {
 
   interface OffcutAPI {
     openVideoDialog: () => Promise<string | null>;
+    openSubtitle: () => Promise<string | null>;
     openFolder: () => Promise<{ folder: string; files: string[] } | null>;
     chooseDirectory: (defaultPath?: string) => Promise<string | null>;
     saveFileDialog: (opts?: {
@@ -90,6 +91,17 @@ declare global {
     mpv: {
       open: (filePath: string) => Promise<{ ok: boolean }>;
       command: (cmd: string, ...args: unknown[]) => Promise<unknown>;
+      getTracks: () => Promise<
+        Array<{
+          id: number;
+          type: string;
+          title: string;
+          lang: string;
+          codec: string;
+          selected: boolean;
+          external: boolean;
+        }>
+      >;
       setProperty: (name: string, value: unknown) => Promise<unknown>;
       getProperty: (name: string) => Promise<unknown>;
       onStatus: (handler: (status: MpvStatus) => void) => () => void;

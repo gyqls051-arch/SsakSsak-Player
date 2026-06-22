@@ -298,7 +298,7 @@ export default function ControlBar({
                     e.stopPropagation();
                     seekTo(n.time);
                   }}
-                  className="absolute -top-1 -translate-x-1/2 w-2 h-2 rotate-45 bg-sky-400 hover:bg-sky-300 transition-colors cursor-pointer"
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-sky-400 ring-1 ring-bg-surface hover:w-2.5 hover:h-2.5 hover:bg-sky-300 transition-all cursor-pointer"
                   style={{ left: `${left}%` }}
                   title={`메모: ${n.text || formatTime(n.time)}`}
                 />

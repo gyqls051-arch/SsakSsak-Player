@@ -88,6 +88,20 @@ function registerIpc() {
     return result.filePaths[0];
   });
 
+  ipcMain.handle('dialog:openSubtitle', async () => {
+    if (!state.mainWindow) return null;
+    const result = await dialog.showOpenDialog(state.mainWindow, {
+      title: '자막 파일 선택',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Subtitle', extensions: ['srt', 'ass', 'ssa', 'vtt', 'sub', 'sup'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle('dialog:saveFile', async (_evt, opts) => {
     if (!state.mainWindow) return null;
     const result = await dialog.showSaveDialog(state.mainWindow, opts || {});
@@ -130,6 +144,7 @@ function registerIpc() {
     return { ok: true };
   });
   ipcMain.handle('mpv:command', async (_evt, command, ...args) => ensureMpv(onStatus).command(command, ...args));
+  ipcMain.handle('mpv:getTracks', async () => ensureMpv(onStatus).getTracks());
   ipcMain.handle('mpv:setProperty', async (_evt, name, value) => ensureMpv(onStatus).setProperty(name, value));
   ipcMain.handle('mpv:getProperty', async (_evt, name) => ensureMpv(onStatus).getProperty(name));
 
@@ -138,7 +153,7 @@ function registerIpc() {
   // renders ABOVE the mpv child window (a React menu would be hidden behind it).
   // Each item just forwards an action id to the renderer, which reuses its
   // existing handlers — keeping all app logic in one place.
-  ipcMain.handle('window:showVideoMenu', (_evt, ctx) => {
+  ipcMain.handle('window:showVideoMenu', async (_evt, ctx) => {
     if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
     const c = ctx || {};
     const send = (action) => {
@@ -146,19 +161,56 @@ function registerIpc() {
         state.mainWindow.webContents.send('menu:action', action);
       }
     };
+    const tracks = await ensureMpv(onStatus)
+      .getTracks()
+      .catch(() => []);
+    const audio = tracks.filter((t) => t.type === 'audio');
+    const subs = tracks.filter((t) => t.type === 'sub');
+    const trackLabel = (t) => `${t.lang ? `[${t.lang}] ` : ''}${t.title || t.codec || '트랙 ' + t.id}`;
+
+    const trackItems = [];
+    if (audio.length > 1) {
+      trackItems.push({
+        label: '오디오 트랙',
+        submenu: audio.map((t) => ({
+          label: trackLabel(t),
+          type: 'checkbox',
+          checked: t.selected,
+          click: () => send('audio:' + t.id),
+        })),
+      });
+    }
+    trackItems.push({
+      label: '자막',
+      submenu: [
+        { label: '끄기', type: 'checkbox', checked: !subs.some((s) => s.selected), click: () => send('sub:no') },
+        ...subs.map((t) => ({
+          label: trackLabel(t),
+          type: 'checkbox',
+          checked: t.selected,
+          click: () => send('sub:' + t.id),
+        })),
+        { type: 'separator' },
+        { label: '자막 파일 불러오기…', click: () => send('loadSub') },
+      ],
+    });
+
     const template = [
       { label: c.paused ? '▶  재생' : '❚❚  일시정지', click: () => send('togglePause') },
       { label: '◀  이전 프레임', click: () => send('frameBackStep') },
       { label: '다음 프레임  ▶', click: () => send('frameStep') },
       { type: 'separator' },
+      ...trackItems,
+      { type: 'separator' },
       { label: '현재 프레임 캡처 (S)', click: () => send('capture') },
       { label: '현재 프레임 클립보드 복사', click: () => send('copyFrame') },
+      { label: '현재 위치에 메모 (N)', click: () => send('addNote') },
       { label: 'In 지점 설정 (I)', click: () => send('setIn') },
       { label: 'Out 지점 설정 (O)', click: () => send('setOut') },
       { label: '구간 무손실 잘라내기', enabled: !!c.canExtract, click: () => send('extractClip') },
       { label: '구간 내보내기 (재인코딩·정확)', enabled: !!c.canExtract, click: () => send('exportClip') },
       { type: 'separator' },
-      { label: '전체화면 (F)', click: () => send('fullscreen') },
+      { label: '전체화면 (Enter)', click: () => send('fullscreen') },
       { label: '파일 열기… (Ctrl+O)', click: () => send('open') },
     ];
     Menu.buildFromTemplate(template).popup({ window: state.mainWindow });

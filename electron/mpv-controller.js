@@ -33,6 +33,9 @@ class MpvController {
     /** @type {InstanceType<typeof NodeMpv> | null} */
     this.mpv = null;
     this.started = false;
+    // Cached end-of-file flag (kept fresh via the observed 'eof-reached'
+    // property) so play/pause can react instantly without an async round-trip.
+    this.eofReached = false;
     this.lastStatus = {
       filename: null,
       duration: 0,
@@ -71,7 +74,7 @@ class MpvController {
       {
         binary: this.opts.mpvBinary,
         audio_only: false,
-        time_update: 0.1,
+        time_update: 0.05,
         debug: false,
         verbose: false,
         auto_restart: true,
@@ -140,6 +143,9 @@ class MpvController {
         case 'time-pos':
           if (value != null) this.lastStatus.position = Number(value) || 0;
           break;
+        case 'eof-reached':
+          this.eofReached = !!value;
+          return; // internal flag only — no UI status change to emit
         case 'path':
           // mpv 'path' is the absolute file path (mpv 'filename' is basename only)
           if (typeof value === 'string' && value) this.lastStatus.filename = value;
@@ -192,13 +198,24 @@ class MpvController {
     this._emit();
   }
 
-  // True when playback has reached end-of-file (mpv keeps the last frame open
-  // because of --keep-open=always). Used to restart on the next play press.
-  async _atEof() {
+  // Return the current audio/subtitle/video tracks (simplified) for the
+  // track-switching UI.
+  async getTracks() {
+    await this._ensureStarted();
     try {
-      return !!(await this.mpv.getProperty('eof-reached'));
+      const list = await this.mpv.getProperty('track-list');
+      if (!Array.isArray(list)) return [];
+      return list.map((t) => ({
+        id: t.id,
+        type: t.type, // 'video' | 'audio' | 'sub'
+        title: t.title || '',
+        lang: t.lang || '',
+        codec: t.codec || '',
+        selected: !!t.selected,
+        external: !!t.external,
+      }));
     } catch {
-      return false;
+      return [];
     }
   }
 
@@ -206,14 +223,14 @@ class MpvController {
     await this._ensureStarted();
     switch (cmd) {
       case 'play':
-        // Restart from the top if we're sitting at end-of-file.
-        if (await this._atEof()) await this.mpv.seek(0, 'absolute');
+        // Restart from the top if we're sitting at end-of-file (cached flag).
+        if (this.eofReached) this.mpv.seek(0, 'absolute');
         return this.mpv.play();
       case 'pause':
         return this.mpv.pause();
       case 'togglePause':
-        if (await this._atEof()) {
-          await this.mpv.seek(0, 'absolute');
+        if (this.eofReached) {
+          this.mpv.seek(0, 'absolute');
           return this.mpv.play();
         }
         return this.mpv.togglePause();
@@ -235,6 +252,14 @@ class MpvController {
         return this.mpv.volume(Number(args[0]));
       case 'mute':
         return this.mpv.mute();
+      case 'setAudio':
+        return this.mpv.setProperty('aid', args[0]);
+      case 'setSub':
+        // pass a track id number, or 'no' to turn subtitles off
+        return this.mpv.setProperty('sid', args[0]);
+      case 'addSub':
+        // load an external subtitle file and select it
+        return this.mpv.command('sub-add', [String(args[0]), 'select']);
       default:
         // Only the explicitly handled commands above are permitted via IPC.
         // Reject anything else instead of forwarding raw commands to mpv.
