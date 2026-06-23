@@ -143,11 +143,11 @@ Electron에 번들된 Chromium은 다음 라이선스를 따릅니다:
 싹싹김치 플레이어 배포자는, 본 인스톨러를 수령한 모든 제3자에게 배포일로부터 **최소 3년간**, 번들된 mpv 및
 FFmpeg 바이너리에 **대응하는 완전한 소스 코드**를 (a) 위 공개 저장소 링크를 통해 무상으로, 또는 (b) 요청 시
 물리적 매체·전송에 드는 실비 이하의 비용으로 제공합니다. 소스 코드 요청은
-[Issues](https://github.com/rlagyqls051-create/OFFCUT_Play/issues/new) 또는 배포 페이지에 명시된 연락처로
+[Issues](https://github.com/gyqls051-arch/SsakSsak-Player/issues/new) 또는 배포 페이지에 명시된 연락처로
 접수할 수 있습니다.
 
 ---
 
 ## 라이선스 관련 문의
 
-라이선스 의무 위반으로 보이는 부분이 있으면 [Issues](https://github.com/rlagyqls051-create/OFFCUT_Play/issues/new)로 알려주세요.
+라이선스 의무 위반으로 보이는 부분이 있으면 [Issues](https://github.com/gyqls051-arch/SsakSsak-Player/issues/new)로 알려주세요.

@@ -81,4 +81,4 @@ aggregation), 본 앱 코드의 소스 공개 의무는 발생하지 않습니�
 - 자동 업데이트 미통합
 - 일부 키바인딩이 mpv 기본값과 중복될 수 있음
 
-문제 제보: [Issues](https://github.com/rlagyqls051-create/OFFCUT_Play/issues)
+문제 제보: [Issues](https://github.com/gyqls051-arch/SsakSsak-Player/issues)
