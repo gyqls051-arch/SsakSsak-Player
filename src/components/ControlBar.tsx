@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from '../store/playerStore';
+import { useSettingsStore, type PlayMode } from '../store/settingsStore';
 import { useCaptureStore } from '../store/captureStore';
 import { useNotesStore } from '../store/notesStore';
 import { SPEED_STEPS } from '../hooks/useKeyBindings';
@@ -18,6 +19,13 @@ function snapSpeed(value: number): number {
   }
   return nearest;
 }
+
+const PLAYMODE_META: Record<PlayMode, { icon: string; label: string }> = {
+  none: { icon: '→‖', label: '재생 후 정지' },
+  next: { icon: '⏭', label: '다음 파일 자동 재생' },
+  'loop-all': { icon: '🔁', label: '전체 반복' },
+  'loop-one': { icon: '🔂', label: '한 파일 반복' },
+};
 
 // Map upward mouse distance (px) to a sensitivity factor for fine scrubbing —
 // near the bar = 1.0 (normal), far above = down to ~0.05 (frame-by-frame feel).
@@ -65,6 +73,8 @@ export default function ControlBar({
     outPoint,
     loopAB,
   } = usePlayerStore();
+  const playMode = useSettingsStore((s) => s.playMode);
+  const cyclePlayMode = useSettingsStore((s) => s.cyclePlayMode);
   const allCaptures = useCaptureStore((s) => s.captures);
   // Only this video's captures appear as seekbar markers.
   const captures = filename ? allCaptures.filter((c) => c.videoPath === filename) : [];
@@ -406,6 +416,14 @@ export default function ControlBar({
           className="w-24 accent-accent"
           title={`볼륨 ${Math.round(volume)}% (↑↓)`}
         />
+
+        <button
+          onClick={cyclePlayMode}
+          className={`ctrl-btn text-xs ${playMode !== 'none' ? 'bg-white/20' : ''}`}
+          title={`재생 모드: ${PLAYMODE_META[playMode].label} (클릭하여 변경)`}
+        >
+          {PLAYMODE_META[playMode].icon}
+        </button>
 
         <select
           value={snapSpeed(speed)}

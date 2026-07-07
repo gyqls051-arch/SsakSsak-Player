@@ -8,7 +8,16 @@ const NodeMpv = require('node-mpv');
 //   - speed / duration / volume / mute / pause : status reads
 //   - path / filename / filename/no-ext / time-pos / estimated-frame-number :
 //     capture metadata reads (electron/ipc.js capture:now, open())
-const ALLOWED_SET_PROPS = new Set(['ab-loop-a', 'ab-loop-b', 'speed', 'volume', 'mute', 'pause']);
+//   - loop-file : '한 파일 반복' 재생 모드 (src/App.tsx playMode sync)
+const ALLOWED_SET_PROPS = new Set([
+  'ab-loop-a',
+  'ab-loop-b',
+  'speed',
+  'volume',
+  'mute',
+  'pause',
+  'loop-file',
+]);
 const ALLOWED_GET_PROPS = new Set([
   'ab-loop-a',
   'ab-loop-b',
@@ -44,6 +53,7 @@ class MpvController {
       speed: 1,
       volume: 100,
       muted: false,
+      eofReached: false,
     };
   }
 
@@ -149,7 +159,8 @@ class MpvController {
           break;
         case 'eof-reached':
           this.eofReached = !!value;
-          return; // internal flag only — no UI status change to emit
+          this.lastStatus.eofReached = this.eofReached;
+          break; // emit — renderer uses this for auto-advance / repeat modes
         case 'path':
           // mpv 'path' is the absolute file path (mpv 'filename' is basename only)
           if (typeof value === 'string' && value) this.lastStatus.filename = value;
@@ -188,6 +199,8 @@ class MpvController {
     this.lastStatus.position = 0;
     this.lastStatus.duration = 0;
     this.lastStatus.paused = false;
+    this.lastStatus.eofReached = false;
+    this.eofReached = false;
     this._emit();
     try {
       await this.mpv.play();

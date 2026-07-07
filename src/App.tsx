@@ -411,6 +411,39 @@ export default function App() {
     [setError],
   );
 
+  // ---- 재생 모드: loop-file 동기화 + EOF 자동 진행 ----
+  const playMode = useSettingsStore((s) => s.playMode);
+  useEffect(() => {
+    // '한 파일 반복'은 mpv 네이티브 루프(loop-file) — 파일 재로드 없이 끊김 없음.
+    window.offcut.mpv.setProperty('loop-file', playMode === 'loop-one' ? 'inf' : 'no');
+  }, [playMode]);
+
+  const eofReached = usePlayerStore((s) => s.eofReached);
+  useEffect(() => {
+    if (!eofReached) return;
+    const mode = useSettingsStore.getState().playMode;
+    if (mode === 'none' || mode === 'loop-one') return;
+    if (usePlayerStore.getState().loopAB) return; // A-B 루프 중엔 진행 금지
+    const { files } = usePlaylistStore.getState();
+    const cur = usePlayerStore.getState().filename;
+    if (!cur) return;
+    const norm = (p: string) => p.replace(/\//g, '\\').toLowerCase();
+    const idx = files.findIndex((f) => norm(f) === norm(cur));
+    if (idx >= 0 && idx + 1 < files.length) {
+      void openFile(files[idx + 1]);
+      return;
+    }
+    if (mode === 'loop-all') {
+      if (files.length > 0 && idx >= 0) {
+        void openFile(files[0]);
+        return;
+      }
+      // 재생목록 없이 단일 파일 → 처음부터 재생.
+      window.offcut.mpv.command('seek', 0, 'absolute');
+      window.offcut.mpv.command('play');
+    }
+  }, [eofReached, openFile]);
+
   // ---- OS에서 넘어온 파일 열기 (파일 연결 / 두 번째 인스턴스) ----
   useEffect(() => {
     const off = window.offcut.app.onOpenFile((p) => void openFile(p));

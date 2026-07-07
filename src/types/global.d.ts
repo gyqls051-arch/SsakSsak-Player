@@ -9,6 +9,7 @@ declare global {
     speed: number;
     volume: number;
     muted: boolean;
+    eofReached: boolean;
   }
 
   interface CaptureResult {

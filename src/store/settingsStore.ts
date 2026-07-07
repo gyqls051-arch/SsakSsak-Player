@@ -2,8 +2,13 @@ import { create } from 'zustand';
 
 const SECRET_KEY = 'offcut.player.secret';
 const CAPFMT_KEY = 'offcut.player.captureFormat';
+const PLAYMODE_KEY = 'offcut.player.playMode';
 
 export type CaptureFormat = 'png' | 'jpg';
+
+/** 재생 종료 시 동작: 정지 / 다음 파일 / 전체 반복 / 한 파일 반복 */
+export type PlayMode = 'none' | 'next' | 'loop-all' | 'loop-one';
+const PLAY_MODES: PlayMode[] = ['none', 'next', 'loop-all', 'loop-one'];
 
 function loadSecret(): boolean {
   try {
@@ -18,6 +23,15 @@ function loadCaptureFormat(): CaptureFormat {
     return localStorage.getItem(CAPFMT_KEY) === 'jpg' ? 'jpg' : 'png';
   } catch {
     return 'png';
+  }
+}
+
+function loadPlayMode(): PlayMode {
+  try {
+    const v = localStorage.getItem(PLAYMODE_KEY) as PlayMode | null;
+    return v && PLAY_MODES.includes(v) ? v : 'next';
+  } catch {
+    return 'next';
   }
 }
 
@@ -37,6 +51,9 @@ interface SettingsState {
   /** Format used when saving frame captures to disk. */
   captureFormat: CaptureFormat;
   setCaptureFormat: (f: CaptureFormat) => void;
+  /** 재생 종료 시 동작 (4단 순환 토글). */
+  playMode: PlayMode;
+  cyclePlayMode: () => void;
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
@@ -52,5 +69,12 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set(() => {
       persist(CAPFMT_KEY, f);
       return { captureFormat: f };
+    }),
+  playMode: loadPlayMode(),
+  cyclePlayMode: () =>
+    set((s) => {
+      const next = PLAY_MODES[(PLAY_MODES.indexOf(s.playMode) + 1) % PLAY_MODES.length];
+      persist(PLAYMODE_KEY, next);
+      return { playMode: next };
     }),
 }));

@@ -8,6 +8,7 @@ interface PlayerState {
   speed: number;
   volume: number;
   muted: boolean;
+  eofReached: boolean;
   ffprobe: FfprobeInfo | null;
 
   // A-B loop / clip range
@@ -32,6 +33,7 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   speed: 1,
   volume: 100,
   muted: false,
+  eofReached: false,
   ffprobe: null,
   inPoint: null,
   outPoint: null,
