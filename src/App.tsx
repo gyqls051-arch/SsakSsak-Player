@@ -22,6 +22,7 @@ import { useFfprobeOnFile } from './hooks/useFfprobeOnFile';
 import { useFullscreenSync } from './hooks/useFullscreenSync';
 import { useDragDrop } from './hooks/useDragDrop';
 import { evalRate, formatTime, formatTimeForFilename } from './utils/format';
+import { savePosition, lookupPosition, removePosition } from './utils/resumeStore';
 
 function basename(p: string | null) {
   if (!p) return '파일이 열려있지 않습니다';
@@ -62,7 +63,11 @@ function buildNotesContent(format: NoteExportFormat, notes: Note[]): string {
     .join('\r\n');
 }
 
-type Notice = { kind: 'error' | 'info' | 'success'; text: string };
+type Notice = {
+  kind: 'error' | 'info' | 'success';
+  text: string;
+  action?: { label: string; onClick: () => void };
+};
 
 export default function App() {
   // ---- Store accessors ----
@@ -99,17 +104,54 @@ export default function App() {
 
   // Transient notice that auto-dismisses (used for capture/copy confirmations).
   const noticeTimer = useRef<number | null>(null);
-  const showTransient = useCallback((n: Notice) => {
+  const showTransient = useCallback((n: Notice, ms = 1500) => {
     setNotice(n);
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 1500);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), ms);
   }, []);
 
   // ---- mpv status subscription ----
   useEffect(() => window.offcut.mpv.onStatus(setStatus), [setStatus]);
 
   // ---- Exit popup (self-promo) before the window closes ----
-  useEffect(() => window.offcut.app.onExitAd(() => setExitAdOpen(true)), []);
+  useEffect(
+    () =>
+      window.offcut.app.onExitAd(() => {
+        // 종료 직전 이어보기 위치를 한 번 더 저장 (5초 주기 저장의 공백 보완).
+        const s = usePlayerStore.getState();
+        if (s.filename && !useSettingsStore.getState().secret) {
+          savePosition(s.filename, s.position, s.duration);
+        }
+        setExitAdOpen(true);
+      }),
+    [],
+  );
+
+  // ---- 이어보기: 재생 위치 자동 저장 (5초 주기 + 파일 전환 시) ----
+  const lastPosRef = useRef<{ file: string | null; pos: number; dur: number }>({
+    file: null,
+    pos: 0,
+    dur: 0,
+  });
+  useEffect(() => {
+    const tick = () => {
+      const s = usePlayerStore.getState();
+      if (useSettingsStore.getState().secret) return;
+      // 파일이 바뀌었으면 이전 파일의 마지막 위치를 먼저 기록.
+      const prev = lastPosRef.current;
+      if (prev.file && prev.file !== s.filename) {
+        savePosition(prev.file, prev.pos, prev.dur);
+      }
+      lastPosRef.current = { file: s.filename, pos: s.position, dur: s.duration };
+      if (s.filename && !s.paused) savePosition(s.filename, s.position, s.duration);
+    };
+    const id = window.setInterval(tick, 5000);
+    window.addEventListener('beforeunload', tick);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('beforeunload', tick);
+    };
+  }, []);
 
   // ---- Hooks (effects) ----
   const isFullscreen = useFullscreenSync();
@@ -129,11 +171,31 @@ export default function App() {
         if (!target) return;
         await window.offcut.mpv.open(target);
         addRecent(target);
+        // 이어보기: 저장된 위치가 있으면 그 지점부터 (시크릿 모드 제외).
+        const saved = lookupPosition(target);
+        if (saved && !useSettingsStore.getState().secret) {
+          await window.offcut.mpv.command('seek', saved.position, 'absolute');
+          showTransient(
+            {
+              kind: 'info',
+              text: `▶ ${formatTime(saved.position)}부터 이어보기`,
+              action: {
+                label: '처음부터',
+                onClick: () => {
+                  window.offcut.mpv.command('seek', 0, 'absolute');
+                  removePosition(target);
+                  setNotice(null);
+                },
+              },
+            },
+            6000,
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [addRecent, setError],
+    [addRecent, setError, showTransient],
   );
 
   const openFolder = useCallback(async () => {
@@ -595,6 +657,14 @@ export default function App() {
           }`}
         >
           {notice.text}
+          {notice.action && (
+            <button
+              onClick={notice.action.onClick}
+              className="ml-3 px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-xs align-middle"
+            >
+              {notice.action.label}
+            </button>
+          )}
           <button
             onClick={() => setNotice(null)}
             className="ml-3 text-white/60 hover:text-white align-top"
