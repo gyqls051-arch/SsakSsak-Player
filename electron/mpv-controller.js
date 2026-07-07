@@ -62,6 +62,8 @@ class MpvController {
       '--hwdec=auto-safe',
       // gpu-next composites cleanly inside a foreign HWND (Chromium).
       '--vo=gpu-next',
+      // UI 볼륨 슬라이더 상한(150%)과 엔진 상한을 일치시킨다.
+      '--volume-max=150',
     ];
     // Note: capture is done via ffmpeg in main.js, so mpv's screenshot
     // options don't matter here — keeping mpv args minimal.
