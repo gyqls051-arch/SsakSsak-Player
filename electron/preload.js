@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('offcut', {
   window: {
     toggleFullscreen: () => ipcRenderer.invoke('window:toggleFullscreen'),
     isFullscreen: () => ipcRenderer.invoke('window:isFullscreen'),
+    setAlwaysOnTop: (flag) => ipcRenderer.invoke('window:setAlwaysOnTop', flag),
     onFullscreenChange: (handler) => {
       const listener = (_e, value) => handler(value);
       ipcRenderer.on('window:fullscreen', listener);

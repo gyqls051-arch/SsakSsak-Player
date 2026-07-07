@@ -63,6 +63,7 @@ const SECTIONS: Array<{ title: string; items: Array<[string, string]> }> = [
     title: '파일 · 도움말',
     items: [
       ['Ctrl+O', '영상 파일 열기'],
+      ['Ctrl+T', '항상 위 (📌) 토글'],
       ['F1 · ?', '이 도움말 토글'],
     ],
   },

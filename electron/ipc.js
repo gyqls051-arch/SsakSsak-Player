@@ -242,6 +242,13 @@ function registerIpc() {
   });
   ipcMain.handle('window:isFullscreen', () => !!state.mainWindow?.isFullScreen());
 
+  // 항상 위 (📌). mpv 비디오 창·프리뷰 창은 mainWindow 소유(owned)라 따라온다.
+  ipcMain.handle('window:setAlwaysOnTop', (_evt, flag) => {
+    if (!state.mainWindow || state.mainWindow.isDestroyed()) return false;
+    state.mainWindow.setAlwaysOnTop(!!flag);
+    return state.mainWindow.isAlwaysOnTop();
+  });
+
   // ---------- Video child window ----------
   ipcMain.handle('video:setBounds', (_evt, bounds) => {
     if (!bounds || typeof bounds.width !== 'number') return;

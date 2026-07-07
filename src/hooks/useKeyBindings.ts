@@ -27,6 +27,8 @@ interface Opts {
   onSubDelay: (delta: number | null) => void;
   /** 오디오 싱크 조절 (delta 초, null=리셋) */
   onAudioDelay: (delta: number | null) => void;
+  /** 항상 위 토글 (Ctrl+T) */
+  onTogglePin: () => void;
 }
 
 /**
@@ -71,6 +73,10 @@ export function useKeyBindings(opts: Opts) {
           case 'KeyR':
             e.preventDefault();
             optsRef.current.onToggleLoopAB();
+            return;
+          case 'KeyT':
+            e.preventDefault();
+            optsRef.current.onTogglePin();
             return;
           case 'ArrowLeft':
             e.preventDefault();

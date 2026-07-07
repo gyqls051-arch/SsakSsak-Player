@@ -134,6 +134,7 @@ declare global {
     window: {
       toggleFullscreen: () => Promise<boolean>;
       isFullscreen: () => Promise<boolean>;
+      setAlwaysOnTop: (flag: boolean) => Promise<boolean>;
       onFullscreenChange: (handler: (value: boolean) => void) => () => void;
     };
     menu: {

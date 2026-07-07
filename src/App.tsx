@@ -97,6 +97,7 @@ export default function App() {
   const [busy, setBusy] = useState<string | null>(null);
   const [capturePulse, setCapturePulse] = useState(0);
   const [copyPulse, setCopyPulse] = useState(0);
+  const [pinned, setPinned] = useState(false);
 
   const setError = useCallback((text: string | null) => {
     setNotice(text ? { kind: 'error', text } : null);
@@ -237,6 +238,12 @@ export default function App() {
       setError(`복사 실패: ${e instanceof Error ? e.message : String(e)}`);
     }
   }, [setError, showTransient]);
+
+  // 항상 위 (📌) 토글 — 세션 한정, 재시작 시 초기화.
+  const handleTogglePin = useCallback(async () => {
+    const next = await window.offcut.window.setAlwaysOnTop(!pinned);
+    setPinned(next);
+  }, [pinned]);
 
   // 자막/오디오 싱크 조절. delta=null 이면 0으로 리셋.
   const adjustDelay = useCallback(
@@ -602,6 +609,7 @@ export default function App() {
     onAddNote: handleAddNote,
     onSubDelay: (d) => void adjustDelay('sub-delay', d),
     onAudioDelay: (d) => void adjustDelay('audio-delay', d),
+    onTogglePin: () => void handleTogglePin(),
   });
 
   // ---- Render ----
@@ -648,6 +656,15 @@ export default function App() {
             용량 ↓
           </button>
           <RecentFilesMenu onOpen={openFile} />
+          <button
+            onClick={handleTogglePin}
+            className={`text-xs px-2 py-1 rounded transition ${
+              pinned ? 'bg-accent/20 text-accent' : 'bg-white/5 hover:bg-white/10 text-white/50'
+            }`}
+            title={pinned ? '항상 위 ON (Ctrl+T)' : '항상 위 OFF (Ctrl+T)'}
+          >
+            📌
+          </button>
           <button
             onClick={toggleSecret}
             className={`text-xs px-2 py-1 rounded transition ${
