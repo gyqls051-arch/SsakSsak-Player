@@ -84,6 +84,10 @@ class MpvController {
       '--volume-max=150',
       // 캡처(screenshot-to-file)가 .jpg 확장자일 때의 품질.
       '--screenshot-jpeg-quality=95',
+      // 파일명이 정확히 같지 않아도 (영상명.kor.srt 등) 자막을 자동 로드.
+      '--sub-auto=fuzzy',
+      // 옆 폴더의 자막 전용 디렉토리도 탐색 (Windows 경로 구분자 ';').
+      '--sub-file-paths=subs;sub;자막',
     ];
     // Note: frame capture uses screenshotToFile() (mpv native) so it matches
     // the displayed frame exactly; seekbar thumbnails still go through ffmpeg.
