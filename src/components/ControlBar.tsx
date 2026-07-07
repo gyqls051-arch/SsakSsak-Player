@@ -243,6 +243,10 @@ export default function ControlBar({
           onMouseMove={handleSeekHover}
           onMouseEnter={handleSeekHover}
           onMouseLeave={() => setHoverState(null)}
+          onWheel={(e) => {
+            if (disabled || duration <= 0) return;
+            window.offcut.mpv.command('seek', e.deltaY < 0 ? 5 : -5, 'relative');
+          }}
           className={`relative h-2 rounded-full bg-white/10 ${disabled ? 'opacity-30' : 'cursor-pointer'}`}
         >
           <div

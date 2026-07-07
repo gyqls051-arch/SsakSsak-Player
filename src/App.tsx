@@ -176,6 +176,18 @@ export default function App() {
     }
   }, [setError, showTransient]);
 
+  // 영상 위 휠 = 볼륨 ±5. mpv 자식 창이 클릭스루라 휠이 이 div에 그대로 온다.
+  const handleVideoWheel = useCallback(
+    (e: React.WheelEvent) => {
+      if (!usePlayerStore.getState().filename) return;
+      const cur = usePlayerStore.getState().volume;
+      const next = Math.max(0, Math.min(150, Math.round(cur + (e.deltaY < 0 ? 5 : -5))));
+      window.offcut.mpv.command('volume', next);
+      showTransient({ kind: 'info', text: `🔊 ${next}%` });
+    },
+    [showTransient],
+  );
+
   const handleSetIn = useCallback(() => {
     setInPoint(usePlayerStore.getState().position);
   }, [setInPoint]);
@@ -530,6 +542,7 @@ export default function App() {
               onClick={handleVideoClick}
               onDoubleClick={handleVideoDoubleClick}
               onContextMenu={handleVideoContextMenu}
+              onWheel={handleVideoWheel}
             />
           )}
         </main>
