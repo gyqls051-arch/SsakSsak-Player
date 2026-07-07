@@ -64,9 +64,11 @@ class MpvController {
       '--vo=gpu-next',
       // UI 볼륨 슬라이더 상한(150%)과 엔진 상한을 일치시킨다.
       '--volume-max=150',
+      // 캡처(screenshot-to-file)가 .jpg 확장자일 때의 품질.
+      '--screenshot-jpeg-quality=95',
     ];
-    // Note: capture is done via ffmpeg in main.js, so mpv's screenshot
-    // options don't matter here — keeping mpv args minimal.
+    // Note: frame capture uses screenshotToFile() (mpv native) so it matches
+    // the displayed frame exactly; seekbar thumbnails still go through ffmpeg.
     if (this.opts.wid) {
       args.push(`--wid=${this.opts.wid}`);
     } else {

@@ -18,7 +18,6 @@ const {
   listVideoFiles,
   uniquePath,
   FF_PROTOCOL_WHITELIST,
-  captureFrameWithFfmpeg,
   thumbnailWithFfmpeg,
   waveformWithFfmpeg,
 } = require('./utils.js');
@@ -276,26 +275,27 @@ function registerIpc() {
     return { sourceName, inputPath, timePos, frame };
   }
 
+  // Capture via mpv's native screenshot-to-file so the saved image is exactly
+  // the frame mpv is displaying (an ffmpeg re-decode can land ±1 frame off).
   ipcMain.handle('capture:now', async (_evt, opts) => {
-    const ffmpegBin = resolveBinary('ffmpeg.exe');
-    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     const ext = opts && opts.format === 'jpg' ? 'jpg' : 'png';
+    const m = ensureMpv(onStatus);
+    // Metadata first (the filename embeds the timecode), then the shot itself.
     const { sourceName, inputPath, timePos, frame } = await readCurrentFrame();
     const outPath = uniquePath(
       path.join(getCaptureDir(), `${sourceName}_${formatTimeForFilename(timePos)}.${ext}`),
     );
-    await captureFrameWithFfmpeg(ffmpegBin, inputPath, timePos, outPath);
+    await m.screenshotToFile(outPath);
     return { path: outPath, videoPath: inputPath, time: timePos, frame };
   });
 
   // Copy the current frame straight to the OS clipboard (no disk file kept).
   ipcMain.handle('capture:copyCurrent', async () => {
-    const ffmpegBin = resolveBinary('ffmpeg.exe');
-    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
-    const { inputPath, timePos } = await readCurrentFrame();
+    const m = ensureMpv(onStatus);
+    await readCurrentFrame(); // throws if nothing is playing
     const tmp = path.join(os.tmpdir(), `offcut_clip_${Date.now()}.png`);
     try {
-      await captureFrameWithFfmpeg(ffmpegBin, inputPath, timePos, tmp);
+      await m.screenshotToFile(tmp);
       const img = nativeImage.createFromPath(tmp);
       if (img.isEmpty()) throw new Error('클립보드 이미지 생성 실패');
       clipboard.writeImage(img);
