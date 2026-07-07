@@ -9,6 +9,8 @@ const NodeMpv = require('node-mpv');
 //   - path / filename / filename/no-ext / time-pos / estimated-frame-number :
 //     capture metadata reads (electron/ipc.js capture:now, open())
 //   - loop-file : '한 파일 반복' 재생 모드 (src/App.tsx playMode sync)
+//   - sub-delay / audio-delay / sub-scale : 자막·오디오 싱크와 자막 크기
+//     (src/App.tsx adjustDelay, 우클릭 '동기화'/'자막 크기' 메뉴)
 const ALLOWED_SET_PROPS = new Set([
   'ab-loop-a',
   'ab-loop-b',
@@ -17,6 +19,9 @@ const ALLOWED_SET_PROPS = new Set([
   'mute',
   'pause',
   'loop-file',
+  'sub-delay',
+  'audio-delay',
+  'sub-scale',
 ]);
 const ALLOWED_GET_PROPS = new Set([
   'ab-loop-a',
@@ -31,6 +36,9 @@ const ALLOWED_GET_PROPS = new Set([
   'filename/no-ext',
   'time-pos',
   'estimated-frame-number',
+  'sub-delay',
+  'audio-delay',
+  'sub-scale',
 ]);
 
 class MpvController {

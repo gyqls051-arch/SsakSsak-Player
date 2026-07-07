@@ -193,6 +193,25 @@ function registerIpc() {
         { label: '자막 파일 불러오기…', click: () => send('loadSub') },
       ],
     });
+    trackItems.push({
+      label: '동기화',
+      submenu: [
+        { label: '자막 싱크 −0.1s (Z)', click: () => send('subdelay:-0.1') },
+        { label: '자막 싱크 +0.1s (Shift+Z)', click: () => send('subdelay:+0.1') },
+        { label: '자막 싱크 리셋 (Alt+Z)', click: () => send('subdelay:0') },
+        { type: 'separator' },
+        { label: '오디오 싱크 −0.1s (D)', click: () => send('audiodelay:-0.1') },
+        { label: '오디오 싱크 +0.1s (Shift+D)', click: () => send('audiodelay:+0.1') },
+        { label: '오디오 싱크 리셋 (Alt+D)', click: () => send('audiodelay:0') },
+      ],
+    });
+    trackItems.push({
+      label: '자막 크기',
+      submenu: [0.75, 1, 1.25, 1.5].map((v) => ({
+        label: `${Math.round(v * 100)}%`,
+        click: () => send('subscale:' + v),
+      })),
+    });
 
     const template = [
       { label: c.paused ? '▶  재생' : '❚❚  일시정지', click: () => send('togglePause') },

@@ -39,6 +39,15 @@ const SECTIONS: Array<{ title: string; items: Array<[string, string]> }> = [
     ],
   },
   {
+    title: '동기화',
+    items: [
+      ['Z / Shift+Z', '자막 싱크 −0.1s / +0.1s'],
+      ['Alt+Z', '자막 싱크 리셋'],
+      ['D / Shift+D', '오디오 싱크 −0.1s / +0.1s'],
+      ['Alt+D', '오디오 싱크 리셋'],
+    ],
+  },
+  {
     title: '캡처 · 메모 · 마커',
     items: [
       ['S · Ctrl+E', '현재 프레임 캡처 (PNG/JPG)'],

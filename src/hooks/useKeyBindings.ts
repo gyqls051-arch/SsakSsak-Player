@@ -23,6 +23,10 @@ interface Opts {
   onClearAB: () => void;
   onExtractClip: () => void;
   onAddNote: () => void;
+  /** 자막 싱크 조절 (delta 초, null=리셋) */
+  onSubDelay: (delta: number | null) => void;
+  /** 오디오 싱크 조절 (delta 초, null=리셋) */
+  onAudioDelay: (delta: number | null) => void;
 }
 
 /**
@@ -80,10 +84,26 @@ export function useKeyBindings(opts: Opts) {
         return;
       }
 
-      // Alt+Enter = fullscreen (Windows convention)
-      if (alt && key === 'Enter') {
-        e.preventDefault();
-        window.offcut.window.toggleFullscreen();
+      // ---- Alt combos ----
+      // 명시적으로 처리하지 않는 Alt 콤보는 여기서 흡수해, Alt+문자가 아래
+      // 평문 바인딩(예: Alt+S → 캡처)을 오발동시키지 않게 한다.
+      if (alt && !ctrl) {
+        if (key === 'Enter') {
+          // Alt+Enter = fullscreen (Windows convention)
+          e.preventDefault();
+          window.offcut.window.toggleFullscreen();
+          return;
+        }
+        switch (code) {
+          case 'KeyZ': // 자막 싱크 리셋
+            e.preventDefault();
+            optsRef.current.onSubDelay(null);
+            return;
+          case 'KeyD': // 오디오 싱크 리셋
+            e.preventDefault();
+            optsRef.current.onAudioDelay(null);
+            return;
+        }
         return;
       }
 
@@ -191,6 +211,14 @@ export function useKeyBindings(opts: Opts) {
         case 'KeyV':
           e.preventDefault();
           cmd('speed', 1);
+          return;
+        case 'KeyZ': // 자막 싱크 (mpv 관례: z 늦추기 / Z 당기기)
+          e.preventDefault();
+          optsRef.current.onSubDelay(shift ? 0.1 : -0.1);
+          return;
+        case 'KeyD': // 오디오 싱크
+          e.preventDefault();
+          optsRef.current.onAudioDelay(shift ? 0.1 : -0.1);
           return;
       }
 

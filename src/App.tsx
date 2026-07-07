@@ -238,6 +238,29 @@ export default function App() {
     }
   }, [setError, showTransient]);
 
+  // 자막/오디오 싱크 조절. delta=null 이면 0으로 리셋.
+  const adjustDelay = useCallback(
+    async (prop: 'sub-delay' | 'audio-delay', delta: number | null) => {
+      if (!usePlayerStore.getState().filename) return;
+      try {
+        let next = 0;
+        if (delta !== null) {
+          const cur = Number(await window.offcut.mpv.getProperty(prop)) || 0;
+          next = Math.round((cur + delta) * 10) / 10;
+        }
+        await window.offcut.mpv.setProperty(prop, next);
+        const name = prop === 'sub-delay' ? '자막' : '오디오';
+        showTransient({
+          kind: 'info',
+          text: `${name} 싱크 ${next > 0 ? '+' : ''}${next.toFixed(1)}s${delta === null ? ' (리셋)' : ''}`,
+        });
+      } catch (e) {
+        setError(`싱크 조절 실패: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+    [showTransient, setError],
+  );
+
   // 영상 위 휠 = 볼륨 ±5. mpv 자식 창이 클릭스루라 휠이 이 div에 그대로 온다.
   const handleVideoWheel = useCallback(
     (e: React.WheelEvent) => {
@@ -505,6 +528,20 @@ export default function App() {
         });
         return;
       }
+      if (action.startsWith('subdelay:')) {
+        const v = action.slice(9);
+        void adjustDelay('sub-delay', v === '0' ? null : Number(v));
+        return;
+      }
+      if (action.startsWith('audiodelay:')) {
+        const v = action.slice(11);
+        void adjustDelay('audio-delay', v === '0' ? null : Number(v));
+        return;
+      }
+      if (action.startsWith('subscale:')) {
+        window.offcut.mpv.setProperty('sub-scale', Number(action.slice(9)));
+        return;
+      }
       switch (action) {
         case 'togglePause':
         case 'frameStep':
@@ -549,6 +586,7 @@ export default function App() {
     handleExtractClip,
     handleExportClip,
     openFile,
+    adjustDelay,
   ]);
 
   // ---- Keyboard ----
@@ -562,6 +600,8 @@ export default function App() {
     onClearAB: handleClearAB,
     onExtractClip: handleExtractClip,
     onAddNote: handleAddNote,
+    onSubDelay: (d) => void adjustDelay('sub-delay', d),
+    onAudioDelay: (d) => void adjustDelay('audio-delay', d),
   });
 
   // ---- Render ----
