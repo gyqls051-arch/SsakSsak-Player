@@ -556,6 +556,16 @@ function registerIpc() {
     state.exitConfirmed = true;
     if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.close();
   });
+
+  // 렌더러가 구독 준비를 마친 뒤 호출. 대기 중이던 argv 파일을 그때 흘려보낸다
+  // (did-finish-load 시점에는 React effect가 아직 등록 전일 수 있어 레이스 방지).
+  ipcMain.handle('app:rendererReady', () => {
+    state.rendererReady = true;
+    if (state.pendingOpenPath && state.mainWindow && !state.mainWindow.isDestroyed()) {
+      state.mainWindow.webContents.send('app:open-file', state.pendingOpenPath);
+      state.pendingOpenPath = null;
+    }
+  });
 }
 
 module.exports = { registerIpc, registerProtocols };

@@ -90,6 +90,12 @@ contextBridge.exposeInMainWorld('offcut', {
       ipcRenderer.on('app:exit-ad', listener);
       return () => ipcRenderer.removeListener('app:exit-ad', listener);
     },
+    rendererReady: () => ipcRenderer.invoke('app:rendererReady'),
+    onOpenFile: (handler) => {
+      const listener = (_e, p) => handler(p);
+      ipcRenderer.on('app:open-file', listener);
+      return () => ipcRenderer.removeListener('app:open-file', listener);
+    },
   },
   files: {
     pathForFile: (file) => {

@@ -23,4 +23,9 @@ module.exports = {
   /** Set true once the user confirms quit in the exit popup, so the next
    *  window 'close' is allowed through instead of re-showing the popup. */
   exitConfirmed: false,
+  /** File path passed via argv/second-instance before the renderer is ready.
+   *  Flushed when the renderer invokes app:rendererReady. */
+  pendingOpenPath: null,
+  /** True once the renderer signalled app:rendererReady (subscriptions live). */
+  rendererReady: false,
 };

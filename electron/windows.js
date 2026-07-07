@@ -162,6 +162,18 @@ function hideSeekPreview() {
   }
 }
 
+// Route a file-open request to the renderer (so recent-files / playlist logic
+// stays in one place). Queued until the renderer signals app:rendererReady —
+// did-finish-load fires before React effects register their subscriptions, so
+// a plain send() could vanish into the void.
+function openFileInRenderer(p) {
+  if (state.rendererReady && state.mainWindow && !state.mainWindow.isDestroyed()) {
+    state.mainWindow.webContents.send('app:open-file', p);
+  } else {
+    state.pendingOpenPath = p;
+  }
+}
+
 // Forward mpv status to the renderer. Shared so a pre-warmed controller and the
 // IPC handlers bind the same callback (ensureMpv only binds onStatus on the
 // first call that creates the controller).
@@ -296,4 +308,5 @@ module.exports = {
   setVideoVisible,
   showSeekPreview,
   hideSeekPreview,
+  openFileInRenderer,
 };

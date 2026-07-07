@@ -67,6 +67,26 @@ function listVideoFiles(dir) {
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
 }
 
+// Extract the first playable media file from a process argv array. Used for
+// file-association launches and second-instance forwarding.
+// dev argv looks like [electron.exe, '.', file] — '.' is a directory and is
+// filtered out by the isFile() check.
+function extractFileArg(argv, cwd = process.cwd()) {
+  for (const raw of argv.slice(1)) {
+    if (!raw || raw.startsWith('-')) continue;
+    const p = path.resolve(cwd, raw);
+    let st;
+    try {
+      st = fs.statSync(p);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    if (ALLOWED_INPUT_EXTS.has(path.extname(p).toLowerCase())) return p;
+  }
+  return null;
+}
+
 // Validate a media input path before handing it to ffmpeg/ffprobe: it must be a
 // real, existing regular file with an allowed extension. Throws on failure.
 function validateMediaInput(input) {
@@ -229,6 +249,7 @@ module.exports = {
   formatTimeForFilename,
   sanitizeBasename,
   getHwnd,
+  extractFileArg,
   validateMediaInput,
   listVideoFiles,
   uniquePath,

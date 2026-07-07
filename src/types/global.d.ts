@@ -186,6 +186,8 @@ declare global {
     app: {
       confirmQuit: () => Promise<void>;
       onExitAd: (handler: () => void) => () => void;
+      rendererReady: () => Promise<void>;
+      onOpenFile: (handler: (path: string) => void) => () => void;
     };
     files: {
       pathForFile: (file: File) => string | null;

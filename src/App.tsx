@@ -337,6 +337,14 @@ export default function App() {
     [setError],
   );
 
+  // ---- OS에서 넘어온 파일 열기 (파일 연결 / 두 번째 인스턴스) ----
+  useEffect(() => {
+    const off = window.offcut.app.onOpenFile((p) => void openFile(p));
+    // 구독 등록 후 준비 신고 → main이 대기 중이던 argv 파일을 흘려보낸다.
+    window.offcut.app.rendererReady();
+    return off;
+  }, [openFile]);
+
   // ---- Video click interactions ----
   // The mpv child window is click-through (setIgnoreMouseEvents), so these fire
   // on the React video div beneath it. Single click toggles pause; a 200ms
