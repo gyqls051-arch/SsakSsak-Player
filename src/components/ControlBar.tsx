@@ -6,6 +6,8 @@ import { useNotesStore } from '../store/notesStore';
 import { SPEED_STEPS } from '../hooks/useKeyBindings';
 import { formatTime } from '../utils/format';
 import { useSeekThumbnail } from '../hooks/useSeekThumbnail';
+import { useWaveform } from '../hooks/useWaveform';
+import { useAccentColor } from '../hooks/useAccentColor';
 
 function snapSpeed(value: number): number {
   let nearest = SPEED_STEPS[0];
@@ -104,6 +106,8 @@ export default function ControlBar({
   }, [copyPulse]);
 
   const seekThumb = useSeekThumbnail(filename, hoverState?.time ?? null);
+  const { accentRgb } = useAccentColor();
+  const waveform = useWaveform(filename, accentRgb, duration);
 
   const disabled = !filename;
   const displayTime = dragTime ?? position;
@@ -248,6 +252,14 @@ export default function ControlBar({
         </div>
       )}
       <div className="relative">
+        {waveform && (
+          <img
+            src={waveform}
+            alt=""
+            className="absolute inset-x-0 -top-5 h-5 w-full object-fill opacity-30 pointer-events-none select-none"
+            draggable={false}
+          />
+        )}
         <div
           ref={seekRef}
           onMouseDown={handleSeekDown}
