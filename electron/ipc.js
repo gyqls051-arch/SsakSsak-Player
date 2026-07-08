@@ -215,6 +215,20 @@ function registerIpc() {
         click: () => send('subscale:' + v),
       })),
     });
+    trackItems.push({
+      label: '화면',
+      submenu: [
+        { label: '90° 회전', click: () => send('rotate') },
+        { type: 'separator' },
+        { label: '비율: 자동', click: () => send('aspect:-1') },
+        { label: '비율: 16:9', click: () => send('aspect:16:9') },
+        { label: '비율: 4:3', click: () => send('aspect:4:3') },
+        { type: 'separator' },
+        { label: '확대 +', click: () => send('zoom:+') },
+        { label: '축소 −', click: () => send('zoom:-') },
+        { label: '줌 리셋', click: () => send('zoom:0') },
+      ],
+    });
     if (chapterList.length > 0) {
       const fmt = (sec) => {
         const s = Math.max(0, Number(sec) || 0);

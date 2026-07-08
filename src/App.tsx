@@ -173,6 +173,10 @@ export default function App() {
         if (!target) return;
         await window.offcut.mpv.open(target);
         addRecent(target);
+        // 이전 파일의 화면 조정(회전/비율/줌)이 다음 파일에 남지 않게 리셋.
+        window.offcut.mpv.setProperty('video-rotate', 0);
+        window.offcut.mpv.setProperty('video-aspect-override', '-1');
+        window.offcut.mpv.setProperty('video-zoom', 0);
         // 이어보기: 저장된 위치가 있으면 그 지점부터 (시크릿 모드 제외).
         const saved = lookupPosition(target);
         if (saved && !useSettingsStore.getState().secret) {
@@ -597,6 +601,29 @@ export default function App() {
       }
       if (action.startsWith('seekto:')) {
         window.offcut.mpv.command('seek', Number(action.slice(7)), 'absolute');
+        return;
+      }
+      if (action === 'rotate') {
+        window.offcut.mpv.getProperty('video-rotate').then((cur) => {
+          window.offcut.mpv.setProperty('video-rotate', ((Number(cur) || 0) + 90) % 360);
+        });
+        return;
+      }
+      if (action.startsWith('aspect:')) {
+        window.offcut.mpv.setProperty('video-aspect-override', action.slice(7)); // '-1' = 자동
+        return;
+      }
+      if (action.startsWith('zoom:')) {
+        const v = action.slice(5);
+        if (v === '0') {
+          window.offcut.mpv.setProperty('video-zoom', 0);
+          return;
+        }
+        // video-zoom 은 log2 스케일: ±0.1 ≈ ±7%
+        window.offcut.mpv.getProperty('video-zoom').then((cur) => {
+          const next = +((Number(cur) || 0) + (v === '+' ? 0.1 : -0.1)).toFixed(2);
+          window.offcut.mpv.setProperty('video-zoom', next);
+        });
         return;
       }
       switch (action) {

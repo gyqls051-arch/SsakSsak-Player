@@ -11,6 +11,7 @@ const NodeMpv = require('node-mpv');
 //   - loop-file : '한 파일 반복' 재생 모드 (src/App.tsx playMode sync)
 //   - sub-delay / audio-delay / sub-scale : 자막·오디오 싱크와 자막 크기
 //     (src/App.tsx adjustDelay, 우클릭 '동기화'/'자막 크기' 메뉴)
+//   - video-rotate / video-aspect-override / video-zoom : 우클릭 '화면' 메뉴
 const ALLOWED_SET_PROPS = new Set([
   'ab-loop-a',
   'ab-loop-b',
@@ -22,6 +23,9 @@ const ALLOWED_SET_PROPS = new Set([
   'sub-delay',
   'audio-delay',
   'sub-scale',
+  'video-rotate',
+  'video-aspect-override',
+  'video-zoom',
 ]);
 const ALLOWED_GET_PROPS = new Set([
   'ab-loop-a',
@@ -40,6 +44,8 @@ const ALLOWED_GET_PROPS = new Set([
   'audio-delay',
   'sub-scale',
   'chapter-list',
+  'video-rotate',
+  'video-zoom',
 ]);
 
 class MpvController {
