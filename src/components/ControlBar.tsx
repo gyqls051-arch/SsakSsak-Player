@@ -48,6 +48,7 @@ interface Props {
   onClearAB: () => void;
   onExtractClip: () => void;
   onExportClip: () => void;
+  onExportGif: () => void;
 }
 
 export default function ControlBar({
@@ -62,6 +63,7 @@ export default function ControlBar({
   onClearAB,
   onExtractClip,
   onExportClip,
+  onExportGif,
 }: Props) {
   const {
     filename,
@@ -239,6 +241,13 @@ export default function ControlBar({
                 title="구간 내보내기 — 재인코딩, 프레임 정확 · 호환 MP4"
               >
                 🎬 출력
+              </button>
+              <button
+                onClick={onExportGif}
+                className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/60"
+                title="구간을 GIF/WebP 애니메이션으로 — 최대 30초 (디스코드/슬랙 첨부용)"
+              >
+                🎞 GIF
               </button>
             </>
           )}

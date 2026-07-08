@@ -369,6 +369,45 @@ export default function App() {
     }
   }, [setError]);
 
+  const handleExportGif = useCallback(async () => {
+    const s = usePlayerStore.getState();
+    if (!s.filename || s.inPoint === null || s.outPoint === null || s.outPoint <= s.inPoint) {
+      setNotice({ kind: 'info', text: 'In/Out 점을 먼저 설정하세요 (I / O)' });
+      return;
+    }
+    if (s.outPoint - s.inPoint > 30) {
+      setNotice({ kind: 'info', text: 'GIF/WebP는 최대 30초까지 지원합니다. 구간을 줄여주세요.' });
+      return;
+    }
+    const defaultPath = s.filename.replace(
+      /\.[^.]+$/,
+      `_clip_${formatTimeForFilename(s.inPoint)}-${formatTimeForFilename(s.outPoint)}.gif`,
+    );
+    const out = await window.offcut.saveFileDialog({
+      title: 'GIF/WebP로 내보내기',
+      defaultPath,
+      filters: [
+        { name: 'GIF', extensions: ['gif'] },
+        { name: 'WebP', extensions: ['webp'] },
+      ],
+    });
+    if (!out) return;
+    setBusy(`GIF 생성 중… ${basename(s.filename)}`);
+    try {
+      const r = await window.offcut.clip.gif({
+        input: s.filename,
+        output: out,
+        start: s.inPoint,
+        end: s.outPoint,
+      });
+      setNotice({ kind: 'success', text: `🎞 저장됨: ${r.path}` });
+    } catch (e) {
+      setError(`GIF 내보내기 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  }, [setError]);
+
   const handleExportXmp = useCallback(async () => {
     const s = usePlayerStore.getState();
     if (!s.filename) return;
@@ -653,6 +692,9 @@ export default function App() {
         case 'exportClip':
           handleExportClip();
           break;
+        case 'exportGif':
+          handleExportGif();
+          break;
         case 'fullscreen':
           window.offcut.window.toggleFullscreen();
           break;
@@ -669,6 +711,7 @@ export default function App() {
     handleSetOut,
     handleExtractClip,
     handleExportClip,
+    handleExportGif,
     openFile,
     adjustDelay,
   ]);
@@ -805,6 +848,7 @@ export default function App() {
           onClearAB={handleClearAB}
           onExtractClip={handleExtractClip}
           onExportClip={handleExportClip}
+          onExportGif={handleExportGif}
         />
       </div>
 

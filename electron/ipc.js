@@ -29,6 +29,7 @@ const {
 // existing parent directory. Output extension is constrained to media types.
 const ALLOWED_OUTPUT_EXTS = new Set([
   '.mp4', '.mkv', '.mov', '.webm', '.m4v', '.mp3', '.m4a', '.aac', '.wav', '.png',
+  '.gif', '.webp',
 ]);
 
 function validateOutputPath(output) {
@@ -261,6 +262,7 @@ function registerIpc() {
       { label: 'Out 지점 설정 (O)', click: () => send('setOut') },
       { label: '구간 무손실 잘라내기', enabled: !!c.canExtract, click: () => send('extractClip') },
       { label: '구간 내보내기 (재인코딩·정확)', enabled: !!c.canExtract, click: () => send('exportClip') },
+      { label: '구간 GIF/WebP로 내보내기', enabled: !!c.canExtract, click: () => send('exportGif') },
       { type: 'separator' },
       { label: '전체화면 (Enter)', click: () => send('fullscreen') },
       { label: '파일 열기… (Ctrl+O)', click: () => send('open') },
@@ -566,6 +568,59 @@ function registerIpc() {
       proc.on('close', (code) => {
         if (code === 0) resolve({ path: safeOutput });
         else reject(new Error(`ffmpeg export exited ${code}: ${stderr.trim().slice(-200)}`));
+      });
+    });
+  });
+
+  // ---------- GIF/WebP clip export ----------
+  // In/Out 구간을 짧은 애니메이션으로 (디스코드/슬랙 첨부용). GIF는 palettegen/
+  // paletteuse 2단 필터를 한 커맨드로, WebP는 libwebp 무한 루프.
+  const GIF_MAX_SEC = 30;
+  ipcMain.handle('clip:gif', async (_evt, params) => {
+    const ffmpegBin = resolveBinary('ffmpeg.exe');
+    if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
+    if (!params || !params.input || !params.output) throw new Error('입력/출력 경로 누락');
+    const safeInput = validateMediaInput(params.input);
+    const safeOutput = validateOutputPath(params.output);
+    const start = Number(params.start);
+    const end = Number(params.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new Error('잘못된 시작/끝 시각');
+    }
+    if (end - start > GIF_MAX_SEC) {
+      throw new Error(`GIF/WebP는 최대 ${GIF_MAX_SEC}초까지 지원합니다`);
+    }
+    const fps = Math.max(5, Math.min(30, Number(params.fps) || 15));
+    const width = Math.max(120, Math.min(960, Number(params.width) || 480));
+    const isWebp = /\.webp$/i.test(safeOutput);
+    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
+
+    return new Promise((resolve, reject) => {
+      const args = [
+        '-y',
+        '-loglevel', 'error',
+        ...FF_PROTOCOL_WHITELIST,
+        '-ss', start.toFixed(3),
+        '-to', end.toFixed(3),
+        '-i', safeInput,
+        ...(isWebp
+          ? [
+              '-vf', `fps=${fps},scale=${width}:-2:flags=lanczos`,
+              '-c:v', 'libwebp', '-q:v', '75', '-loop', '0', '-an',
+            ]
+          : [
+              '-vf',
+              `fps=${fps},scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3`,
+            ]),
+        safeOutput,
+      ];
+      const proc = spawn(ffmpegBin, args, { windowsHide: true });
+      let stderr = '';
+      proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
+      proc.on('error', reject);
+      proc.on('close', (code) => {
+        if (code === 0) resolve({ path: safeOutput });
+        else reject(new Error(`ffmpeg gif exited ${code}: ${stderr.trim().slice(-200)}`));
       });
     });
   });

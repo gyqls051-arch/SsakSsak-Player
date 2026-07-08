@@ -164,6 +164,14 @@ declare global {
         start: number;
         end: number;
       }) => Promise<{ path: string }>;
+      gif: (params: {
+        input: string;
+        output: string;
+        start: number;
+        end: number;
+        fps?: number;
+        width?: number;
+      }) => Promise<{ path: string }>;
     };
     preview: {
       thumbnail: (params: { input: string; time: number; width?: number }) => Promise<string>;
