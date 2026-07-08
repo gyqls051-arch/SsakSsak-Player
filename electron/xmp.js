@@ -30,6 +30,7 @@ function buildXmpMarkers(captures, fps) {
     })
     .join('\n');
 
+  // eslint-disable-next-line no-irregular-whitespace -- begin="" 안의 U+FEFF(BOM)는 XMP 스펙 필수 마커
   return `<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="싹싹김치 플레이어">
    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">

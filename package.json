@@ -1,7 +1,7 @@
 {
   "name": "ssaksaak-kimchi-player",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "싹싹김치 플레이어 — lightweight video player for editors",
   "main": "electron/main.js",
   "scripts": {

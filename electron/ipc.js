@@ -79,7 +79,7 @@ function registerIpc() {
       filters: [
         {
           name: 'Video',
-          extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'wmv', 'flv', 'ts', 'mts', 'mpg', 'mpeg'],
+          extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'wmv', 'flv', 'ts', 'mts', 'm2ts', 'mpg', 'mpeg', '3gp', 'ogv'],
         },
         { name: 'All Files', extensions: ['*'] },
       ],

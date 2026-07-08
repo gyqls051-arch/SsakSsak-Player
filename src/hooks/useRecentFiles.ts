@@ -18,7 +18,9 @@ function load(): string[] {
 function save(files: string[]) {
   try {
     localStorage.setItem(KEY, JSON.stringify(files));
-  } catch {}
+  } catch {
+    /* storage unavailable — 최근 목록은 메모리에서만 유지 */
+  }
 }
 
 export function useRecentFiles() {

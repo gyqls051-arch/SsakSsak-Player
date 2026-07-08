@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-const VIDEO_EXTS = /\.(mp4|mkv|mov|avi|webm|m4v|wmv|flv|ts|mts|mpg|mpeg)$/i;
+const VIDEO_EXTS = /\.(mp4|mkv|mov|avi|webm|m4v|wmv|flv|ts|mts|m2ts|mpg|mpeg|3gp|ogv)$/i;
 
 /**
  * Window-wide file drag & drop handler. Calls `onFile` with the absolute path

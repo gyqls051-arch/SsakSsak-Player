@@ -31,6 +31,7 @@ function formatTimeForFilename(seconds) {
 
 function sanitizeBasename(name) {
   // Strip Windows-reserved characters so generated PNG / clip filenames are safe.
+  // eslint-disable-next-line no-control-regex -- 제어문자(\x00-\x1f) 제거가 목적
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
 }
 
@@ -121,37 +122,6 @@ function isPathInsideCaptureDir(target) {
   if (norm === allowed) return false;
   const sep = path.sep.toLowerCase();
   return norm.startsWith(allowed + sep);
-}
-
-// FFmpeg single-frame capture. -ss must come BEFORE -i (input-side seek) — recent
-// ffmpeg builds reject it as an output option in this position. Fast keyframe
-// seek; sub-second offset is acceptable for capture use. Rotation metadata is
-// honored automatically (-autorotate is enabled by default).
-function captureFrameWithFfmpeg(ffmpegBin, input, timeSeconds, output) {
-  return new Promise((resolve, reject) => {
-    const t = Math.max(0, Number(timeSeconds) || 0);
-    const safeInput = validateMediaInput(input);
-    const isJpg = /\.jpe?g$/i.test(output);
-    const args = [
-      '-y',
-      '-loglevel', 'error',
-      ...FF_PROTOCOL_WHITELIST,
-      '-ss', t.toFixed(3),
-      '-i', safeInput,
-      '-vframes', '1',
-      // High-quality JPEG when the output is .jpg; PNG ignores -q:v.
-      ...(isJpg ? ['-q:v', '2'] : []),
-      output,
-    ];
-    const proc = spawn(ffmpegBin, args, { windowsHide: true });
-    let stderr = '';
-    proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
-    proc.on('error', reject);
-    proc.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg capture exited ${code}: ${stderr.trim().slice(-200)}`));
-    });
-  });
 }
 
 // Return a path that doesn't collide with an existing file by appending
@@ -255,7 +225,6 @@ module.exports = {
   uniquePath,
   FF_PROTOCOL_WHITELIST,
   isPathInsideCaptureDir,
-  captureFrameWithFfmpeg,
   thumbnailWithFfmpeg,
   waveformWithFfmpeg,
 };

@@ -7,8 +7,16 @@ const globals = require('globals');
 
 module.exports = tseslint.config(
   {
-    // Build output, deps, and vendored binaries are not linted.
-    ignores: ['dist/**', 'release/**', 'node_modules/**', 'resources/**'],
+    // Build output, deps, vendored binaries, and tsc-generated config
+    // artifacts (vite.config.js/.d.ts는 vite.config.ts의 빌드 산출물).
+    ignores: [
+      'dist/**',
+      'release/**',
+      'node_modules/**',
+      'resources/**',
+      'vite.config.js',
+      'vite.config.d.ts',
+    ],
   },
 
   // Base JS + TypeScript recommended rules for the renderer (TS/TSX).
@@ -33,9 +41,9 @@ module.exports = tseslint.config(
     },
   },
 
-  // Electron main process and config files are CommonJS running on Node.
+  // Electron main process and CJS config files run on Node (CommonJS).
   {
-    files: ['electron/**/*.js', '*.config.{js,ts}', 'electron-launcher.js', 'scripts/**/*.js'],
+    files: ['electron/**/*.js', 'eslint.config.js', 'electron-launcher.js', 'scripts/**/*.js'],
     extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,
@@ -44,6 +52,17 @@ module.exports = tseslint.config(
     },
     rules: {
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+    },
+  },
+
+  // ESM config files (tailwind uses export default; vite.config.ts is TS ESM).
+  {
+    files: ['tailwind.config.js', 'vite.config.ts'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node },
     },
   },
 );

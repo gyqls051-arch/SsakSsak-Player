@@ -278,8 +278,6 @@ class MpvController {
         return this.mpv.command('frame-step', []);
       case 'frameBackStep':
         return this.mpv.command('frame-back-step', []);
-      case 'screenshot':
-        return this.mpv.command('screenshot', ['video']);
       case 'toggleFullscreen':
         return this.mpv.toggleFullscreen();
       case 'speed':
