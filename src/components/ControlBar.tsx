@@ -72,6 +72,7 @@ export default function ControlBar({
     inPoint,
     outPoint,
     loopAB,
+    chapters,
   } = usePlayerStore();
   const playMode = useSettingsStore((s) => s.playMode);
   const cyclePlayMode = useSettingsStore((s) => s.cyclePlayMode);
@@ -286,6 +287,19 @@ export default function ControlBar({
               title={`Out: ${formatTime(outPoint)} (O)`}
             />
           )}
+          {duration > 0 &&
+            chapters.map((c, i) => (
+              <div
+                key={`ch-${i}`}
+                onMouseDown={(e) => {
+                  e.stopPropagation();
+                  seekTo(c.time);
+                }}
+                className="absolute top-0 w-px h-2 bg-white/50 hover:w-0.5 hover:bg-white transition-all cursor-pointer"
+                style={{ left: `${Math.min(100, Math.max(0, (c.time / duration) * 100))}%` }}
+                title={`챕터: ${c.title || formatTime(c.time)}`}
+              />
+            ))}
           {duration > 0 &&
             captures.map((c) => {
               const left = Math.min(100, Math.max(0, (c.time / duration) * 100));

@@ -29,6 +29,8 @@ interface Opts {
   onAudioDelay: (delta: number | null) => void;
   /** 항상 위 토글 (Ctrl+T) */
   onTogglePin: () => void;
+  /** 이전(-1)/다음(+1) 챕터 이동 (PgUp/PgDn) */
+  onChapterJump: (dir: 1 | -1) => void;
 }
 
 /**
@@ -163,6 +165,14 @@ export function useKeyBindings(opts: Opts) {
             e.preventDefault();
             optsRef.current.onClearAB();
           }
+          return;
+        case 'PageUp':
+          e.preventDefault();
+          optsRef.current.onChapterJump(-1);
+          return;
+        case 'PageDown':
+          e.preventDefault();
+          optsRef.current.onChapterJump(1);
           return;
       }
 

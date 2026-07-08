@@ -21,6 +21,7 @@ const SECTIONS: Array<{ title: string; items: Array<[string, string]> }> = [
       ['Ctrl + ← →', '5초 이동'],
       ['J / L', '5초 뒤 / 앞'],
       ['0 – 9', '0% / 10% / … / 90% 위치로 점프'],
+      ['PgUp / PgDn', '이전 / 다음 챕터'],
     ],
   },
   {

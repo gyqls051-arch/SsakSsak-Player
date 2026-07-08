@@ -39,6 +39,7 @@ const ALLOWED_GET_PROPS = new Set([
   'sub-delay',
   'audio-delay',
   'sub-scale',
+  'chapter-list',
 ]);
 
 class MpvController {

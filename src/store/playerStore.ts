@@ -1,5 +1,10 @@
 import { create } from 'zustand';
 
+export interface Chapter {
+  title: string;
+  time: number;
+}
+
 interface PlayerState {
   filename: string | null;
   duration: number;
@@ -10,14 +15,17 @@ interface PlayerState {
   muted: boolean;
   eofReached: boolean;
   ffprobe: FfprobeInfo | null;
+  /** 현재 파일의 챕터 목록 (없으면 빈 배열). */
+  chapters: Chapter[];
 
   // A-B loop / clip range
   inPoint: number | null;
   outPoint: number | null;
   loopAB: boolean;
 
-  setStatus: (s: Partial<Omit<PlayerState, 'setStatus' | 'setFfprobe' | 'setInPoint' | 'setOutPoint' | 'setLoopAB' | 'clearAB'>>) => void;
+  setStatus: (s: Partial<Omit<PlayerState, 'setStatus' | 'setFfprobe' | 'setChapters' | 'setInPoint' | 'setOutPoint' | 'setLoopAB' | 'clearAB'>>) => void;
   setFfprobe: (info: FfprobeInfo | null) => void;
+  setChapters: (c: Chapter[]) => void;
 
   setInPoint: (t: number | null) => void;
   setOutPoint: (t: number | null) => void;
@@ -35,11 +43,13 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   muted: false,
   eofReached: false,
   ffprobe: null,
+  chapters: [],
   inPoint: null,
   outPoint: null,
   loopAB: false,
   setStatus: (s) => set(s),
   setFfprobe: (info) => set({ ffprobe: info }),
+  setChapters: (c) => set({ chapters: c }),
   setInPoint: (t) => set({ inPoint: t }),
   setOutPoint: (t) => set({ outPoint: t }),
   setLoopAB: (v) => set({ loopAB: v }),

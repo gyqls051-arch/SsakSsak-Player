@@ -160,8 +160,11 @@ function registerIpc() {
         state.mainWindow.webContents.send('menu:action', action);
       }
     };
-    const tracks = await ensureMpv(onStatus)
-      .getTracks()
+    const mpvCtl = ensureMpv(onStatus);
+    const tracks = await mpvCtl.getTracks().catch(() => []);
+    const chapterList = await mpvCtl
+      .getProperty('chapter-list')
+      .then((l) => (Array.isArray(l) ? l : []))
       .catch(() => []);
     const audio = tracks.filter((t) => t.type === 'audio');
     const subs = tracks.filter((t) => t.type === 'sub');
@@ -212,6 +215,23 @@ function registerIpc() {
         click: () => send('subscale:' + v),
       })),
     });
+    if (chapterList.length > 0) {
+      const fmt = (sec) => {
+        const s = Math.max(0, Number(sec) || 0);
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const ss = Math.floor(s % 60);
+        const p = (n) => String(n).padStart(2, '0');
+        return h > 0 ? `${h}:${p(m)}:${p(ss)}` : `${m}:${p(ss)}`;
+      };
+      trackItems.push({
+        label: '챕터',
+        submenu: chapterList.map((ch, i) => ({
+          label: `${fmt(ch.time)}  ${ch.title || `챕터 ${i + 1}`}`,
+          click: () => send('seekto:' + (Number(ch.time) || 0)),
+        })),
+      });
+    }
 
     const template = [
       { label: c.paused ? '▶  재생' : '❚❚  일시정지', click: () => send('togglePause') },

@@ -73,6 +73,7 @@ export default function App() {
   // ---- Store accessors ----
   const setStatus = usePlayerStore((s) => s.setStatus);
   const filename = usePlayerStore((s) => s.filename);
+  const duration = usePlayerStore((s) => s.duration);
   const paused = usePlayerStore((s) => s.paused);
   const inPoint = usePlayerStore((s) => s.inPoint);
   const outPoint = usePlayerStore((s) => s.outPoint);
@@ -474,6 +475,51 @@ export default function App() {
     }
   }, [eofReached, openFile]);
 
+  // ---- 챕터: duration이 도착하면(=로드 완료) 챕터 목록을 읽는다 ----
+  const hasDuration = duration > 0;
+  useEffect(() => {
+    const setChapters = usePlayerStore.getState().setChapters;
+    if (!filename || !hasDuration) {
+      setChapters([]);
+      return;
+    }
+    let cancelled = false;
+    window.offcut.mpv
+      .getProperty('chapter-list')
+      .then((list) => {
+        if (cancelled || !Array.isArray(list)) return;
+        setChapters(
+          list.map((c: { title?: string; time?: number }) => ({
+            title: c.title || '',
+            time: Number(c.time) || 0,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setChapters([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [filename, hasDuration]);
+
+  // 이전(-1)/다음(+1) 챕터로 이동 (PgUp/PgDn).
+  const jumpChapter = useCallback(
+    (dir: 1 | -1) => {
+      const { chapters, position } = usePlayerStore.getState();
+      if (chapters.length === 0) return;
+      const target =
+        dir === 1
+          ? chapters.find((c) => c.time > position + 0.5)
+          : [...chapters].reverse().find((c) => c.time < position - 2);
+      if (target) {
+        window.offcut.mpv.command('seek', target.time, 'absolute');
+        showTransient({ kind: 'info', text: `📑 ${target.title || formatTime(target.time)}` });
+      }
+    },
+    [showTransient],
+  );
+
   // ---- OS에서 넘어온 파일 열기 (파일 연결 / 두 번째 인스턴스) ----
   useEffect(() => {
     const off = window.offcut.app.onOpenFile((p) => void openFile(p));
@@ -549,6 +595,10 @@ export default function App() {
         window.offcut.mpv.setProperty('sub-scale', Number(action.slice(9)));
         return;
       }
+      if (action.startsWith('seekto:')) {
+        window.offcut.mpv.command('seek', Number(action.slice(7)), 'absolute');
+        return;
+      }
       switch (action) {
         case 'togglePause':
         case 'frameStep':
@@ -610,6 +660,7 @@ export default function App() {
     onSubDelay: (d) => void adjustDelay('sub-delay', d),
     onAudioDelay: (d) => void adjustDelay('audio-delay', d),
     onTogglePin: () => void handleTogglePin(),
+    onChapterJump: jumpChapter,
   });
 
   // ---- Render ----
