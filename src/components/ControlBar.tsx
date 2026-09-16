@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePlayerStore } from '../store/playerStore';
 import { useSettingsStore, type PlayMode } from '../store/settingsStore';
 import { useCaptureStore } from '../store/captureStore';
@@ -86,6 +86,14 @@ export default function ControlBar({
   const allNotes = useNotesStore((s) => s.notes);
   const notes = filename ? allNotes.filter((n) => n.videoPath === filename) : [];
   const seekRef = useRef<HTMLDivElement>(null);
+  const scrubRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startTime: number;
+    duration: number;
+    rect: { left: number; top: number; width: number };
+    lastSeekAt: number;
+  } | null>(null);
 
   const [dragTime, setDragTime] = useState<number | null>(null);
   const [scrubSensitivity, setScrubSensitivity] = useState<number | null>(null);
@@ -120,61 +128,112 @@ export default function ControlBar({
     window.offcut.mpv.command('seek', clamped, 'absolute');
   };
 
-  const handleSeekDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (disabled || duration <= 0 || !seekRef.current) return;
+  const timeFromPointer = (
+    session: NonNullable<typeof scrubRef.current>,
+    clientX: number,
+    clientY: number,
+  ) => {
+    const deltaX = clientX - session.startX;
+    const upwardDistance = Math.max(0, session.rect.top - clientY);
+    const sensitivity = sensitivityFromDistance(upwardDistance);
+    const ratioDelta = (deltaX / session.rect.width) * sensitivity;
+    return {
+      time: Math.max(
+        0,
+        Math.min(session.duration, session.startTime + ratioDelta * session.duration),
+      ),
+      sensitivity,
+    };
+  };
+
+  const handleSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (
+      disabled ||
+      duration <= 0 ||
+      !e.isPrimary ||
+      e.button !== 0 ||
+      !seekRef.current
+    ) {
+      return;
+    }
+    e.preventDefault();
     const rect = seekRef.current.getBoundingClientRect();
-    const startX = e.clientX;
     const startRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const startTime = startRatio * duration;
-
+    scrubRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startTime,
+      duration,
+      rect: { left: rect.left, top: rect.top, width: rect.width },
+      lastSeekAt: 0,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setHoverState(null);
     setDragTime(startTime);
     setScrubSensitivity(1);
     seekTo(startTime);
-
-    let lastSeekAt = 0;
-    const SEEK_THROTTLE_MS = 50;
-
-    const onMove = (ev: MouseEvent) => {
-      const deltaX = ev.clientX - startX;
-      const upwardDistance = Math.max(0, rect.top - ev.clientY);
-      const sensitivity = sensitivityFromDistance(upwardDistance);
-      const ratioDelta = (deltaX / rect.width) * sensitivity;
-      const next = Math.max(0, Math.min(duration, startTime + ratioDelta * duration));
-
-      setDragTime(next);
-      setScrubSensitivity(sensitivity);
-
-      const now = Date.now();
-      if (now - lastSeekAt >= SEEK_THROTTLE_MS) {
-        lastSeekAt = now;
-        seekTo(next);
-      }
-    };
-
-    const onUp = (ev: MouseEvent) => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      const deltaX = ev.clientX - startX;
-      const upwardDistance = Math.max(0, rect.top - ev.clientY);
-      const sensitivity = sensitivityFromDistance(upwardDistance);
-      const ratioDelta = (deltaX / rect.width) * sensitivity;
-      const finalTime = Math.max(0, Math.min(duration, startTime + ratioDelta * duration));
-      seekTo(finalTime);
-      setDragTime(null);
-      setScrubSensitivity(null);
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
   };
 
-  const handleSeekHover = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleSeekPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const session = scrubRef.current;
+    if (session?.pointerId === e.pointerId) {
+      const next = timeFromPointer(session, e.clientX, e.clientY);
+      setDragTime(next.time);
+      setScrubSensitivity(next.sensitivity);
+      const now = Date.now();
+      if (now - session.lastSeekAt >= 50) {
+        session.lastSeekAt = now;
+        seekTo(next.time);
+      }
+      return;
+    }
     if (disabled || duration <= 0 || !seekRef.current) return;
     const rect = seekRef.current.getBoundingClientRect();
     const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-    const t = (x / rect.width) * duration;
-    setHoverState({ time: t, x });
+    setHoverState({ time: (x / rect.width) * duration, x });
   };
+
+  const finishSeekPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    const session = scrubRef.current;
+    if (!session || session.pointerId !== e.pointerId) return;
+    const final = timeFromPointer(session, e.clientX, e.clientY);
+    seekTo(final.time);
+    scrubRef.current = null;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    setDragTime(null);
+    setScrubSensitivity(null);
+  };
+
+  const cancelSeekPointer = useCallback((pointerId?: number) => {
+    const session = scrubRef.current;
+    if (!session || (pointerId !== undefined && session.pointerId !== pointerId)) return;
+    const node = seekRef.current;
+    if (node?.hasPointerCapture(session.pointerId)) node.releasePointerCapture(session.pointerId);
+    scrubRef.current = null;
+    setDragTime(null);
+    setScrubSensitivity(null);
+  }, []);
+
+  // Blur, file changes, and unmount must not leave an active pointer capture.
+  useEffect(() => {
+    cancelSeekPointer();
+    const node = seekRef.current;
+    const handleBlur = () => cancelSeekPointer();
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('blur', handleBlur);
+      const session = scrubRef.current;
+      if (session && node?.hasPointerCapture(session.pointerId)) {
+        node.releasePointerCapture(session.pointerId);
+      }
+      scrubRef.current = null;
+      setDragTime(null);
+      setScrubSensitivity(null);
+    };
+  }, [filename, cancelSeekPointer]);
 
   // Clear stale hover state when leaving the player area entirely (drag may
   // already have moved focus elsewhere).
@@ -224,7 +283,7 @@ export default function ControlBar({
               <button
                 onClick={onToggleLoopAB}
                 className={`px-2 py-0.5 rounded transition ${loopAB ? 'bg-yellow-400/30 text-yellow-200' : 'bg-white/5 hover:bg-white/10 text-white/60'}`}
-                title="A-B 구간 반복 (L)"
+                title="A-B 구간 반복 (Ctrl+R)"
               >
                 ↻ 반복 {loopAB ? 'ON' : 'OFF'}
               </button>
@@ -271,15 +330,42 @@ export default function ControlBar({
         )}
         <div
           ref={seekRef}
-          onMouseDown={handleSeekDown}
-          onMouseMove={handleSeekHover}
-          onMouseEnter={handleSeekHover}
-          onMouseLeave={() => setHoverState(null)}
+          role="slider"
+          tabIndex={disabled ? -1 : 0}
+          aria-label="재생 위치"
+          aria-disabled={disabled}
+          aria-valuemin={0}
+          aria-valuemax={Math.max(0, duration)}
+          aria-valuenow={Math.max(0, Math.min(duration, displayTime))}
+          aria-valuetext={`${formatTime(displayTime)} / ${formatTime(duration)}`}
+          onPointerDown={handleSeekPointerDown}
+          onPointerMove={handleSeekPointerMove}
+          onPointerEnter={handleSeekPointerMove}
+          onPointerUp={finishSeekPointer}
+          onPointerCancel={(e) => cancelSeekPointer(e.pointerId)}
+          onLostPointerCapture={(e) => cancelSeekPointer(e.pointerId)}
+          onPointerLeave={() => {
+            if (!scrubRef.current) setHoverState(null);
+          }}
+          onKeyDown={(e) => {
+            if (disabled || duration <= 0) return;
+            let next: number | null = null;
+            if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = displayTime - 5;
+            if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = displayTime + 5;
+            if (e.key === 'Home') next = 0;
+            if (e.key === 'End') next = duration;
+            if (next === null) return;
+            e.preventDefault();
+            e.stopPropagation();
+            seekTo(next);
+          }}
           onWheel={(e) => {
             if (disabled || duration <= 0) return;
+            e.preventDefault();
             window.offcut.mpv.command('seek', e.deltaY < 0 ? 5 : -5, 'relative');
           }}
-          className={`relative h-2 rounded-full bg-white/10 ${disabled ? 'opacity-30' : 'cursor-pointer'}`}
+          style={{ touchAction: 'none' }}
+          className={`relative h-2 rounded-full bg-white/10 focus:outline-none focus:ring-2 focus:ring-accent/70 ${disabled ? 'opacity-30' : 'cursor-pointer'}`}
         >
           <div
             className="absolute inset-y-0 left-0 bg-accent rounded-full pointer-events-none"
@@ -312,7 +398,7 @@ export default function ControlBar({
             chapters.map((c, i) => (
               <div
                 key={`ch-${i}`}
-                onMouseDown={(e) => {
+                onPointerDown={(e) => {
                   e.stopPropagation();
                   seekTo(c.time);
                 }}
@@ -327,7 +413,7 @@ export default function ControlBar({
               return (
                 <div
                   key={c.id}
-                  onMouseDown={(e) => {
+                  onPointerDown={(e) => {
                     e.stopPropagation();
                     seekTo(c.time);
                   }}
@@ -343,7 +429,7 @@ export default function ControlBar({
               return (
                 <div
                   key={n.id}
-                  onMouseDown={(e) => {
+                  onPointerDown={(e) => {
                     e.stopPropagation();
                     seekTo(n.time);
                   }}

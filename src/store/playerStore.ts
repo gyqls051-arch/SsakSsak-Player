@@ -5,15 +5,7 @@ export interface Chapter {
   time: number;
 }
 
-interface PlayerState {
-  filename: string | null;
-  duration: number;
-  position: number;
-  paused: boolean;
-  speed: number;
-  volume: number;
-  muted: boolean;
-  eofReached: boolean;
+interface PlayerState extends MpvStatus {
   ffprobe: FfprobeInfo | null;
   /** 현재 파일의 챕터 목록 (없으면 빈 배열). */
   chapters: Chapter[];
@@ -23,7 +15,7 @@ interface PlayerState {
   outPoint: number | null;
   loopAB: boolean;
 
-  setStatus: (s: Partial<Omit<PlayerState, 'setStatus' | 'setFfprobe' | 'setChapters' | 'setInPoint' | 'setOutPoint' | 'setLoopAB' | 'clearAB'>>) => void;
+  setStatus: (status: MpvStatus) => void;
   setFfprobe: (info: FfprobeInfo | null) => void;
   setChapters: (c: Chapter[]) => void;
 
@@ -34,6 +26,7 @@ interface PlayerState {
 }
 
 export const usePlayerStore = create<PlayerState>((set) => ({
+  loadId: 0,
   filename: null,
   duration: 0,
   position: 0,
@@ -42,12 +35,18 @@ export const usePlayerStore = create<PlayerState>((set) => ({
   volume: 100,
   muted: false,
   eofReached: false,
+  loading: false,
+  error: null,
   ffprobe: null,
   chapters: [],
   inPoint: null,
   outPoint: null,
   loopAB: false,
-  setStatus: (s) => set(s),
+  setStatus: (status) =>
+    set((state) => {
+      if (status.loadId < state.loadId) return {};
+      return status;
+    }),
   setFfprobe: (info) => set({ ffprobe: info }),
   setChapters: (c) => set({ chapters: c }),
   setInPoint: (t) => set({ inPoint: t }),

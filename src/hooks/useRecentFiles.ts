@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useSyncExternalStore } from 'react';
 import { useSettingsStore } from '../store/settingsStore';
 
 const KEY = 'offcut.player.recent';
 const MAX = 10;
+type Listener = () => void;
 
 function load(): string[] {
   try {
@@ -23,39 +24,47 @@ function save(files: string[]) {
   }
 }
 
+let snapshot = load();
+const listeners = new Set<Listener>();
+
+function getSnapshot() {
+  return snapshot;
+}
+
+function publish(next: string[], persist = true) {
+  snapshot = next;
+  if (persist) save(next);
+  listeners.forEach((listener) => listener());
+}
+
+function handleStorage(event: StorageEvent) {
+  if (event.key === KEY || event.key === null) publish(load(), false);
+}
+
+function subscribe(listener: Listener) {
+  listeners.add(listener);
+  if (listeners.size === 1) window.addEventListener('storage', handleStorage);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) window.removeEventListener('storage', handleStorage);
+  };
+}
+
+function add(path: string) {
+  // Secret (incognito) mode: don't leave a trace of what was opened.
+  if (useSettingsStore.getState().secret) return;
+  publish([path, ...snapshot.filter((p) => p !== path)].slice(0, MAX));
+}
+
+function remove(path: string) {
+  publish(snapshot.filter((p) => p !== path));
+}
+
+function clear() {
+  publish([]);
+}
+
 export function useRecentFiles() {
-  const [files, setFiles] = useState<string[]>(() => load());
-
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === KEY) setFiles(load());
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
-
-  const add = useCallback((path: string) => {
-    // Secret (incognito) mode: don't leave a trace of what was opened.
-    if (useSettingsStore.getState().secret) return;
-    setFiles((prev) => {
-      const next = [path, ...prev.filter((p) => p !== path)].slice(0, MAX);
-      save(next);
-      return next;
-    });
-  }, []);
-
-  const remove = useCallback((path: string) => {
-    setFiles((prev) => {
-      const next = prev.filter((p) => p !== path);
-      save(next);
-      return next;
-    });
-  }, []);
-
-  const clear = useCallback(() => {
-    setFiles([]);
-    save([]);
-  }, []);
-
+  const files = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return { files, add, remove, clear };
 }

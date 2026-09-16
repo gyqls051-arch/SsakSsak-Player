@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('offcut', {
     command: (cmd, ...args) => ipcRenderer.invoke('mpv:command', cmd, ...args),
     getTracks: () => ipcRenderer.invoke('mpv:getTracks'),
     setProperty: (name, value) => ipcRenderer.invoke('mpv:setProperty', name, value),
+    setABLoop: (inPoint, outPoint) => ipcRenderer.invoke('mpv:setABLoop', inPoint, outPoint),
     getProperty: (name) => ipcRenderer.invoke('mpv:getProperty', name),
     onStatus: (handler) => {
       const listener = (_e, status) => handler(status);
@@ -87,6 +88,7 @@ contextBridge.exposeInMainWorld('offcut', {
   },
   app: {
     confirmQuit: () => ipcRenderer.invoke('app:confirmQuit'),
+    cancelQuit: () => ipcRenderer.invoke('app:cancelQuit'),
     onExitAd: (handler) => {
       const listener = () => handler();
       ipcRenderer.on('app:exit-ad', listener);

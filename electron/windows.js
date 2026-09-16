@@ -1,11 +1,33 @@
-const { BrowserWindow } = require('electron');
+const { app, BrowserWindow } = require('electron');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { fileURLToPath } = require('node:url');
 const state = require('./state.js');
 const { MpvController } = require('./mpv-controller.js');
-const { resolveBinary, getHwnd } = require('./utils.js');
+const { cleanupApp } = require('./cleanup.js');
+const {
+  canonicalExistingPath,
+  getHwnd,
+  pathKey,
+  resolveBinary,
+  spawnTracked,
+} = require('./utils.js');
 
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = !app.isPackaged;
+const QUIT_PROMPT_TIMEOUT_MS = 10_000;
+
+function isAllowedRendererUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { return false; }
+  if (isDev) return url.origin === 'http://localhost:3011' && url.pathname === '/';
+  if (url.protocol !== 'file:') return false;
+  try {
+    const expected = canonicalExistingPath(path.join(__dirname, '..', 'dist', 'index.html'));
+    const actual = canonicalExistingPath(fileURLToPath(url));
+    return pathKey(actual) === pathKey(expected);
+  } catch {
+    return false;
+  }
+}
 
 function getVideoWindow() {
   if (state.videoWindow && !state.videoWindow.isDestroyed()) return state.videoWindow;
@@ -51,26 +73,26 @@ function getVideoWindow() {
   return state.videoWindow;
 }
 
-function setVideoVisible(visible) {
+function applyVideoVisibility() {
   if (!state.videoWindow || state.videoWindow.isDestroyed()) return;
-  // setOpacity preserves mpv's D3D context across hide cycles — avoids the
-  // black-frame flash when the main window regains focus.
-  state.videoWindow.setOpacity(visible ? 1 : 0);
-  if (visible && !state.videoWindow.isVisible()) state.videoWindow.showInactive();
+  const shouldShow = state.desiredVideoVisible &&
+    !state.overlayActive &&
+    !!state.mainWindow &&
+    !state.mainWindow.isDestroyed() &&
+    !state.mainWindow.isMinimized();
+  state.videoWindow.setOpacity(shouldShow ? 1 : 0);
+  if (shouldShow && !state.videoWindow.isVisible()) state.videoWindow.showInactive();
+}
+
+function setVideoVisible(visible) {
+  state.desiredVideoVisible = !!visible;
+  applyVideoVisibility();
 }
 
 function syncVideoBounds() {
   if (!state.videoWindow || state.videoWindow.isDestroyed()) return;
   if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
   if (!state.lastVideoBounds) return;
-  if (state.overlayActive) {
-    setVideoVisible(false);
-    return;
-  }
-  if (state.mainWindow.isMinimized()) {
-    setVideoVisible(false);
-    return;
-  }
   const mc = state.mainWindow.getContentBounds();
   const b = state.lastVideoBounds;
   state.videoWindow.setBounds({
@@ -79,7 +101,7 @@ function syncVideoBounds() {
     width: Math.max(1, Math.round(b.width)),
     height: Math.max(1, Math.round(b.height)),
   });
-  setVideoVisible(true);
+  applyVideoVisibility();
 }
 
 // Transparent, click-through, always-on-top overlay used to render the seekbar
@@ -169,8 +191,8 @@ function hideSeekPreview() {
 function openFileInRenderer(p) {
   if (state.rendererReady && state.mainWindow && !state.mainWindow.isDestroyed()) {
     state.mainWindow.webContents.send('app:open-file', p);
-  } else {
-    state.pendingOpenPath = p;
+  } else if (!state.pendingOpenPaths.includes(p)) {
+    state.pendingOpenPaths.push(p);
   }
 }
 
@@ -202,18 +224,26 @@ function ensureMpv(onStatus) {
 // instantly instead of waiting for the mpv process cold start. Best-effort:
 // any failure just falls back to the old lazy-start path on first open.
 async function warmupMpv() {
+  if (state.isQuitting) return;
   try {
     await ensureMpv(emitStatus).warmup();
   } catch {
     /* ignore — first open() will start mpv the normal way */
   }
+  if (state.isQuitting) return;
   // Touch ffprobe/ffmpeg so their ~200MB binaries are in the OS file cache
   // before the first probe/thumbnail — avoids a cold-start stall on open.
   for (const bin of ['ffprobe.exe', 'ffmpeg.exe']) {
+    if (state.isQuitting) return;
     const p = resolveBinary(bin);
     if (!p) continue;
     try {
-      const proc = spawn(p, ['-version'], { windowsHide: true });
+      const proc = spawnTracked(
+        p,
+        ['-version'],
+        { windowsHide: true, stdio: 'ignore' },
+        5_000,
+      );
       proc.on('error', () => {});
     } catch {
       /* best-effort */
@@ -222,6 +252,16 @@ async function warmupMpv() {
 }
 
 async function createMainWindow() {
+  state.exitConfirmed = false;
+  state.rendererReady = false;
+  state.overlayActive = false;
+  state.desiredVideoVisible = false;
+  state.lastVideoBounds = null;
+  if (state.quitPromptTimer) {
+    clearTimeout(state.quitPromptTimer);
+    state.quitPromptTimer = null;
+  }
+
   state.mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -241,15 +281,39 @@ async function createMainWindow() {
     },
   });
 
+  state.mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  state.mainWindow.webContents.on('will-navigate', (event, targetUrl) => {
+    if (!isAllowedRendererUrl(targetUrl)) event.preventDefault();
+  });
+  state.mainWindow.webContents.on('did-start-loading', () => {
+    state.rendererReady = false;
+    state.navigationGeneration += 1;
+    state.approvedOutputPaths.clear();
+    state.approvedOutputDirs.clear();
+    state.generatedPaths.clear();
+  });
+
+  // Attach OS shutdown hooks before navigation starts so a shutdown during the
+  // initial renderer load cannot be blocked by the later close prompt.
+  state.mainWindow.on('query-session-end', () => {
+    state.isQuitting = true;
+    state.exitConfirmed = true;
+    if (state.quitPromptTimer) {
+      clearTimeout(state.quitPromptTimer);
+      state.quitPromptTimer = null;
+    }
+    void cleanupApp();
+  });
+  state.mainWindow.on('session-end', () => {
+    state.isQuitting = true;
+    state.exitConfirmed = true;
+    void cleanupApp();
+  });
+
   state.mainWindow.on('move', syncVideoBounds);
   state.mainWindow.on('resize', syncVideoBounds);
-  state.mainWindow.on('minimize', () => state.videoWindow?.hide());
-  state.mainWindow.on('restore', () => {
-    if (state.videoWindow && !state.videoWindow.isDestroyed()) {
-      state.videoWindow.showInactive();
-    }
-    syncVideoBounds();
-  });
+  state.mainWindow.on('minimize', () => applyVideoVisibility());
+  state.mainWindow.on('restore', syncVideoBounds);
   state.mainWindow.on('focus', () => {
     if (state.overlayActive) return;
     syncVideoBounds();
@@ -272,18 +336,28 @@ async function createMainWindow() {
     await state.mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
-  // Show the self-promo exit popup before actually closing. Once the user
-  // confirms (app:confirmQuit sets state.exitConfirmed), the close goes through.
-  state.mainWindow.on('close', (e) => {
-    if (state.exitConfirmed) return;
-    e.preventDefault();
+  state.mainWindow.on('close', (event) => {
+    if (state.exitConfirmed || state.isQuitting) return;
+    event.preventDefault();
     if (state.mainWindow && !state.mainWindow.isDestroyed()) {
       state.mainWindow.webContents.send('app:exit-ad');
     }
+    if (state.quitPromptTimer) clearTimeout(state.quitPromptTimer);
+    state.quitPromptTimer = setTimeout(() => {
+      state.quitPromptTimer = null;
+      state.exitConfirmed = true;
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.close();
+    }, QUIT_PROMPT_TIMEOUT_MS);
+    state.quitPromptTimer.unref?.();
   });
 
   state.mainWindow.on('closed', () => {
     state.mainWindow = null;
+    state.rendererReady = false;
+    if (state.quitPromptTimer) {
+      clearTimeout(state.quitPromptTimer);
+      state.quitPromptTimer = null;
+    }
     if (state.previewWindow && !state.previewWindow.isDestroyed()) {
       state.previewWindow.destroy();
       state.previewWindow = null;
@@ -291,10 +365,6 @@ async function createMainWindow() {
     if (state.videoWindow && !state.videoWindow.isDestroyed()) {
       state.videoWindow.destroy();
       state.videoWindow = null;
-    }
-    if (state.mpv) {
-      state.mpv.dispose();
-      state.mpv = null;
     }
   });
 }

@@ -14,6 +14,7 @@ function nextSpeed(current: number, dir: 1 | -1): number {
 }
 
 interface Opts {
+  enabled?: boolean;
   onOpenFile: () => void;
   onCapture: () => void;
   onToggleHelp: () => void;
@@ -33,6 +34,30 @@ interface Opts {
   onChapterJump: (dir: 1 | -1) => void;
 }
 
+const WIDGET_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  'button',
+  'a[href]',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="button"]',
+  '[role="checkbox"]',
+  '[role="combobox"]',
+  '[role="listbox"]',
+  '[role="menu"]',
+  '[role="menuitem"]',
+  '[role="option"]',
+  '[role="radio"]',
+  '[role="slider"]',
+  '[role="spinbutton"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="textbox"]',
+  '[role="tree"]',
+  '[role="treeitem"]',
+].join(',');
+
 /**
  * Key resolution uses `event.code` (physical key, layout-independent) for letter
  * keys so the shortcuts work even when the user is in a Korean IME mode. Special
@@ -44,41 +69,37 @@ export function useKeyBindings(opts: Opts) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (e.defaultPrevented || optsRef.current.enabled === false) return;
+      const target = e.target;
+      if (target instanceof Element && target.closest(WIDGET_SELECTOR)) return;
 
       const ctrl = e.ctrlKey || e.metaKey;
       const shift = e.shiftKey;
       const alt = e.altKey;
       const code = e.code;
       const key = e.key;
+      const runOnce = (action: () => void) => {
+        e.preventDefault();
+        if (!e.repeat) action();
+      };
 
       // ---- Modifier combos first ----
       if (ctrl && !alt) {
         switch (code) {
           case 'KeyO':
-            if (!shift) {
-              e.preventDefault();
-              optsRef.current.onOpenFile();
-            }
+            if (!shift) runOnce(optsRef.current.onOpenFile);
             return;
           case 'KeyS':
-            if (shift) {
-              e.preventDefault();
-              optsRef.current.onExtractClip();
-            }
+            if (shift) runOnce(optsRef.current.onExtractClip);
             return;
           case 'KeyE':
-            e.preventDefault();
-            optsRef.current.onCapture();
+            runOnce(optsRef.current.onCapture);
             return;
           case 'KeyR':
-            e.preventDefault();
-            optsRef.current.onToggleLoopAB();
+            runOnce(optsRef.current.onToggleLoopAB);
             return;
           case 'KeyT':
-            e.preventDefault();
-            optsRef.current.onTogglePin();
+            runOnce(optsRef.current.onTogglePin);
             return;
           case 'ArrowLeft':
             e.preventDefault();
@@ -92,33 +113,27 @@ export function useKeyBindings(opts: Opts) {
         return;
       }
 
-      // ---- Alt combos ----
-      // 명시적으로 처리하지 않는 Alt 콤보는 여기서 흡수해, Alt+문자가 아래
-      // 평문 바인딩(예: Alt+S → 캡처)을 오발동시키지 않게 한다.
+      // 명시적으로 처리하지 않는 Alt 콤보는 평문 바인딩으로 흘리지 않는다.
       if (alt && !ctrl) {
         if (key === 'Enter') {
-          // Alt+Enter = fullscreen (Windows convention)
-          e.preventDefault();
-          window.offcut.window.toggleFullscreen();
+          runOnce(() => void window.offcut.window.toggleFullscreen());
           return;
         }
         switch (code) {
-          case 'KeyZ': // 자막 싱크 리셋
-            e.preventDefault();
-            optsRef.current.onSubDelay(null);
+          case 'KeyZ':
+            runOnce(() => optsRef.current.onSubDelay(null));
             return;
-          case 'KeyD': // 오디오 싱크 리셋
-            e.preventDefault();
-            optsRef.current.onAudioDelay(null);
+          case 'KeyD':
+            runOnce(() => optsRef.current.onAudioDelay(null));
             return;
         }
         return;
       }
+      if (ctrl || alt) return;
 
       // ---- Global keys (work without a file) ----
       if (key === 'F1' || key === '?' || (shift && code === 'Slash')) {
-        e.preventDefault();
-        optsRef.current.onToggleHelp();
+        runOnce(optsRef.current.onToggleHelp);
         return;
       }
 
@@ -129,17 +144,19 @@ export function useKeyBindings(opts: Opts) {
       // ---- Special keys (use e.key, IME-safe) ----
       switch (key) {
         case ' ':
-          e.preventDefault();
-          cmd('togglePause');
+          runOnce(() => void cmd('togglePause'));
           return;
         case 'Enter':
-          e.preventDefault();
-          window.offcut.window.toggleFullscreen();
+          runOnce(() => void window.offcut.window.toggleFullscreen());
           return;
         case 'Escape':
-          e.preventDefault();
-          window.offcut.window.isFullscreen().then((isFs) => {
-            if (isFs) window.offcut.window.toggleFullscreen();
+          runOnce(() => {
+            void window.offcut.window
+              .isFullscreen()
+              .then((isFs) => {
+                if (isFs) return window.offcut.window.toggleFullscreen();
+              })
+              .catch(() => {});
           });
           return;
         case 'ArrowLeft':
@@ -161,26 +178,20 @@ export function useKeyBindings(opts: Opts) {
           cmd('volume', Math.max(0, volume - 5));
           return;
         case 'Backspace':
-          if (shift) {
-            e.preventDefault();
-            optsRef.current.onClearAB();
-          }
+          if (shift) runOnce(optsRef.current.onClearAB);
           return;
         case 'PageUp':
-          e.preventDefault();
-          optsRef.current.onChapterJump(-1);
+          runOnce(() => optsRef.current.onChapterJump(-1));
           return;
         case 'PageDown':
-          e.preventDefault();
-          optsRef.current.onChapterJump(1);
+          runOnce(() => optsRef.current.onChapterJump(1));
           return;
       }
 
       // ---- Letter keys via e.code (layout-independent) ----
       switch (code) {
         case 'KeyK':
-          e.preventDefault();
-          cmd('togglePause');
+          runOnce(() => void cmd('togglePause'));
           return;
         case 'KeyJ':
           e.preventDefault();
@@ -188,53 +199,42 @@ export function useKeyBindings(opts: Opts) {
           return;
         case 'KeyL':
           e.preventDefault();
-          cmd('seek', shift ? 1 : 5, 'relative'); // YouTube 패턴: 5초 앞
+          cmd('seek', shift ? 1 : 5, 'relative');
           return;
         case 'KeyF':
-          e.preventDefault();
-          window.offcut.window.toggleFullscreen();
+          runOnce(() => void window.offcut.window.toggleFullscreen());
           return;
         case 'KeyM':
-          e.preventDefault();
-          cmd('mute');
+          runOnce(() => void cmd('mute'));
           return;
         case 'KeyN':
-          e.preventDefault();
-          optsRef.current.onAddNote();
+          runOnce(optsRef.current.onAddNote);
           return;
         case 'KeyS':
-          e.preventDefault();
-          optsRef.current.onCapture();
+          runOnce(optsRef.current.onCapture);
           return;
         case 'KeyI':
-        case 'KeyR': // PotPlayer alias
-          e.preventDefault();
-          optsRef.current.onSetInPoint();
+        case 'KeyR':
+          runOnce(optsRef.current.onSetInPoint);
           return;
         case 'KeyO':
-        case 'KeyT': // PotPlayer alias
-          e.preventDefault();
-          optsRef.current.onSetOutPoint();
+        case 'KeyT':
+          runOnce(optsRef.current.onSetOutPoint);
           return;
         case 'KeyC':
-          e.preventDefault();
-          cmd('speed', nextSpeed(speed, 1));
+          runOnce(() => void cmd('speed', nextSpeed(speed, 1)));
           return;
         case 'KeyX':
-          e.preventDefault();
-          cmd('speed', nextSpeed(speed, -1));
+          runOnce(() => void cmd('speed', nextSpeed(speed, -1)));
           return;
         case 'KeyV':
-          e.preventDefault();
-          cmd('speed', 1);
+          runOnce(() => void cmd('speed', 1));
           return;
-        case 'KeyZ': // 자막 싱크 (mpv 관례: z 늦추기 / Z 당기기)
-          e.preventDefault();
-          optsRef.current.onSubDelay(shift ? 0.1 : -0.1);
+        case 'KeyZ':
+          runOnce(() => optsRef.current.onSubDelay(shift ? 0.1 : -0.1));
           return;
-        case 'KeyD': // 오디오 싱크
-          e.preventDefault();
-          optsRef.current.onAudioDelay(shift ? 0.1 : -0.1);
+        case 'KeyD':
+          runOnce(() => optsRef.current.onAudioDelay(shift ? 0.1 : -0.1));
           return;
       }
 
@@ -249,21 +249,20 @@ export function useKeyBindings(opts: Opts) {
           cmd('frameStep');
           return;
         case 'BracketLeft':
-          e.preventDefault();
-          cmd('speed', nextSpeed(speed, -1));
+          runOnce(() => void cmd('speed', nextSpeed(speed, -1)));
           return;
         case 'BracketRight':
-          e.preventDefault();
-          cmd('speed', nextSpeed(speed, 1));
+          runOnce(() => void cmd('speed', nextSpeed(speed, 1)));
           return;
       }
 
       // ---- Digit 0-9: percent jump (use e.code, works regardless of IME) ----
       const digitMatch = /^Digit(\d)$/.exec(code);
       if (digitMatch && duration > 0) {
-        e.preventDefault();
-        const pct = parseInt(digitMatch[1], 10) * 10;
-        cmd('seek', (duration * pct) / 100, 'absolute');
+        runOnce(() => {
+          const pct = parseInt(digitMatch[1], 10) * 10;
+          void cmd('seek', (duration * pct) / 100, 'absolute');
+        });
       }
     };
 

@@ -1,5 +1,5 @@
-const { ipcMain, dialog, shell, protocol, Menu, clipboard, nativeImage } = require('electron');
-const { spawn } = require('node:child_process');
+const { app, ipcMain, dialog, shell, protocol, Menu, clipboard, nativeImage } = require('electron');
+const { fileURLToPath } = require('node:url');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -20,6 +20,16 @@ const {
   FF_PROTOCOL_WHITELIST,
   thumbnailWithFfmpeg,
   waveformWithFfmpeg,
+  canonicalExistingPath,
+  canonicalOutputPath,
+  commitTempFile,
+  createTempPath,
+  isGeneratedPath,
+  pathKey,
+  recordGeneratedPath,
+  spawnTracked,
+  trackOperation,
+  writeFileAtomic,
 } = require('./utils.js');
 
 // Confine a transcode/clip output path to either the capture dir or the
@@ -29,18 +39,141 @@ const {
 // existing parent directory. Output extension is constrained to media types.
 const ALLOWED_OUTPUT_EXTS = new Set([
   '.mp4', '.mkv', '.mov', '.webm', '.m4v', '.mp3', '.m4a', '.aac', '.wav', '.png',
-  '.gif', '.webp',
+  '.jpg', '.jpeg', '.gif', '.webp',
 ]);
+const MAX_CAPTURE_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_FFMPEG_STDERR_BYTES = 256 * 1024;
+const CLIP_TIMEOUT_MS = 60 * 60 * 1_000;
 
-function validateOutputPath(output) {
-  if (!output || typeof output !== 'string') throw new Error('출력 경로가 없습니다');
-  const resolved = path.resolve(output);
-  if (output.includes('..')) throw new Error('잘못된 출력 경로입니다');
+function isPathUnderApprovedDir(pathKeyValue) {
+  for (const dirKey of state.approvedOutputDirs) {
+    const relative = path.relative(dirKey, pathKeyValue);
+    if (relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateOutputPath(output, allowedExts = ALLOWED_OUTPUT_EXTS) {
+  const resolved = canonicalOutputPath(output);
   const ext = path.extname(resolved).toLowerCase();
-  if (!ALLOWED_OUTPUT_EXTS.has(ext)) {
+  if (!allowedExts.has(ext)) {
     throw new Error(`허용되지 않은 출력 형식입니다: ${ext || '(확장자 없음)'}`);
   }
+  const key = pathKey(resolved);
+  if (!state.approvedOutputPaths.has(key) && !isPathUnderApprovedDir(key)) {
+    throw new Error('사용자가 승인하지 않은 출력 경로입니다');
+  }
   return resolved;
+}
+
+function assertTrustedIpcEvent(event) {
+  const win = state.mainWindow;
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) {
+    throw new Error('신뢰할 수 없는 IPC sender입니다');
+  }
+  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error('main frame이 아닌 IPC 호출은 허용되지 않습니다');
+  }
+
+  let url;
+  try {
+    url = new URL(event.senderFrame.url);
+  } catch {
+    throw new Error('잘못된 IPC origin입니다');
+  }
+  if (!app.isPackaged) {
+    if (url.origin !== 'http://localhost:3011') throw new Error('허용되지 않은 IPC origin입니다');
+    return;
+  }
+  if (url.protocol !== 'file:') throw new Error('production에서는 file origin만 허용됩니다');
+  const expected = canonicalExistingPath(path.join(__dirname, '..', 'dist', 'index.html'));
+  const actual = canonicalExistingPath(fileURLToPath(url));
+  if (pathKey(actual) !== pathKey(expected)) throw new Error('허용되지 않은 production 문서입니다');
+}
+
+function secureHandle(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedIpcEvent(event);
+    if (state.isQuitting) throw new Error('앱 종료 중에는 새 작업을 시작할 수 없습니다');
+    return trackOperation(Promise.resolve().then(() => handler(event, ...args)));
+  });
+}
+
+function createCoalescingRunner(label) {
+  let active = false;
+  let pending = null;
+  const start = (entry) => {
+    if (state.isQuitting) {
+      entry.reject(new Error('앱 종료 중에는 새 미리보기 작업을 시작할 수 없습니다'));
+      return;
+    }
+    active = true;
+    Promise.resolve()
+      .then(entry.task)
+      .then(entry.resolve, entry.reject)
+      .finally(() => {
+        active = false;
+        if (pending) {
+          const next = pending;
+          pending = null;
+          start(next);
+        }
+      });
+  };
+  return (task) => new Promise((resolve, reject) => {
+    const entry = { task, resolve, reject };
+    if (!active) {
+      start(entry);
+      return;
+    }
+    if (pending) pending.reject(new Error(`${label} 요청이 더 최신 요청으로 대체되었습니다`));
+    pending = entry;
+  });
+}
+
+async function runFfmpegAtomic(ffmpegBin, argsForOutput, finalPath, label) {
+  const tempPath = createTempPath(finalPath);
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawnTracked(
+        ffmpegBin,
+        argsForOutput(tempPath),
+        { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
+        CLIP_TIMEOUT_MS,
+      );
+      let stderr = '';
+      let settled = false;
+      const rejectOnce = (error) => {
+        if (settled) return;
+        settled = true;
+        reject(error);
+      };
+      proc.stderr.on('data', (chunk) => {
+        if (stderr.length < MAX_FFMPEG_STDERR_BYTES) {
+          stderr += chunk.toString('utf8').slice(0, MAX_FFMPEG_STDERR_BYTES - stderr.length);
+        }
+      });
+      proc.on('error', rejectOnce);
+      proc.on('close', (code) => {
+        if (settled) return;
+        if (proc.ssakssakTimedOut) {
+          rejectOnce(new Error(`${label} 실행 시간이 초과되었습니다`));
+        } else if (code === 0) {
+          settled = true;
+          resolve();
+        } else {
+          rejectOnce(new Error(`${label} exited ${code}: ${stderr.trim().slice(-500)}`));
+        }
+      });
+    });
+    await commitTempFile(tempPath, finalPath);
+    return recordGeneratedPath(finalPath);
+  } catch (error) {
+    await fs.promises.unlink(tempPath).catch(() => {});
+    throw error;
+  }
 }
 const {
   ensureMpv,
@@ -56,12 +189,15 @@ function registerProtocols() {
     try {
       const url = new URL(request.url);
       const decoded = decodeURIComponent(url.pathname).replace(/^\//, '');
-      if (!isPathInsideCaptureDir(decoded)) {
+      const canonical = canonicalExistingPath(decoded);
+      if (!isPathInsideCaptureDir(canonical)) {
         return new Response(null, { status: 403 });
       }
-      const data = await fs.promises.readFile(decoded);
+      const data = await fs.promises.readFile(canonical);
+      const ext = path.extname(canonical).toLowerCase();
+      const contentType = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
       return new Response(data, {
-        headers: { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' },
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'no-cache' },
       });
     } catch {
       return new Response(null, { status: 404 });
@@ -71,7 +207,7 @@ function registerProtocols() {
 
 function registerIpc() {
   // ---------- Dialogs ----------
-  ipcMain.handle('dialog:openVideo', async () => {
+  secureHandle('dialog:openVideo', async () => {
     if (!state.mainWindow) return null;
     const result = await dialog.showOpenDialog(state.mainWindow, {
       title: '영상 파일 선택',
@@ -88,7 +224,7 @@ function registerIpc() {
     return result.filePaths[0];
   });
 
-  ipcMain.handle('dialog:openSubtitle', async () => {
+  secureHandle('dialog:openSubtitle', async () => {
     if (!state.mainWindow) return null;
     const result = await dialog.showOpenDialog(state.mainWindow, {
       title: '자막 파일 선택',
@@ -102,14 +238,17 @@ function registerIpc() {
     return result.filePaths[0];
   });
 
-  ipcMain.handle('dialog:saveFile', async (_evt, opts) => {
+  secureHandle('dialog:saveFile', async (_evt, opts) => {
     if (!state.mainWindow) return null;
     const result = await dialog.showSaveDialog(state.mainWindow, opts || {});
-    return result.canceled ? null : result.filePath;
+    if (result.canceled || !result.filePath) return null;
+    const approved = canonicalOutputPath(result.filePath);
+    state.approvedOutputPaths.add(pathKey(approved));
+    return approved;
   });
 
   // Open a folder and return its playable video files (for the playlist view).
-  ipcMain.handle('folder:open', async () => {
+  secureHandle('folder:open', async () => {
     if (!state.mainWindow) return null;
     const result = await dialog.showOpenDialog(state.mainWindow, {
       title: '폴더 열기',
@@ -120,7 +259,7 @@ function registerIpc() {
     return { folder, files: listVideoFiles(folder) };
   });
 
-  ipcMain.handle('dialog:chooseDirectory', async (_evt, defaultPath) => {
+  secureHandle('dialog:chooseDirectory', async (_evt, defaultPath) => {
     if (!state.mainWindow) return null;
     const result = await dialog.showOpenDialog(state.mainWindow, {
       title: '폴더 선택',
@@ -128,7 +267,9 @@ function registerIpc() {
       properties: ['openDirectory', 'createDirectory'],
     });
     if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
+    const approved = canonicalExistingPath(result.filePaths[0]);
+    state.approvedOutputDirs.add(pathKey(approved));
+    return approved;
   });
 
   // ---------- mpv ----------
@@ -138,22 +279,22 @@ function registerIpc() {
     }
   };
 
-  ipcMain.handle('mpv:open', async (_evt, filePath) => {
-    const m = ensureMpv(onStatus);
-    await m.open(filePath);
-    return { ok: true };
+  secureHandle('mpv:open', async (_evt, filePath) => {
+    const safeInput = validateMediaInput(filePath);
+    return ensureMpv(onStatus).open(safeInput);
   });
-  ipcMain.handle('mpv:command', async (_evt, command, ...args) => ensureMpv(onStatus).command(command, ...args));
-  ipcMain.handle('mpv:getTracks', async () => ensureMpv(onStatus).getTracks());
-  ipcMain.handle('mpv:setProperty', async (_evt, name, value) => ensureMpv(onStatus).setProperty(name, value));
-  ipcMain.handle('mpv:getProperty', async (_evt, name) => ensureMpv(onStatus).getProperty(name));
+  secureHandle('mpv:command', async (_evt, command, ...args) => ensureMpv(onStatus).command(command, ...args));
+  secureHandle('mpv:getTracks', async () => ensureMpv(onStatus).getTracks());
+  secureHandle('mpv:setProperty', async (_evt, name, value) => ensureMpv(onStatus).setProperty(name, value));
+  secureHandle('mpv:setABLoop', async (_evt, inPoint, outPoint) => ensureMpv(onStatus).setABLoop(inPoint, outPoint));
+  secureHandle('mpv:getProperty', async (_evt, name) => ensureMpv(onStatus).getProperty(name));
 
   // ---------- Window ----------
   // Right-click context menu over the video. Built as a native OS menu so it
   // renders ABOVE the mpv child window (a React menu would be hidden behind it).
   // Each item just forwards an action id to the renderer, which reuses its
   // existing handlers — keeping all app logic in one place.
-  ipcMain.handle('window:showVideoMenu', async (_evt, ctx) => {
+  secureHandle('window:showVideoMenu', async (_evt, ctx) => {
     if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
     const c = ctx || {};
     const send = (action) => {
@@ -270,42 +411,41 @@ function registerIpc() {
     Menu.buildFromTemplate(template).popup({ window: state.mainWindow });
   });
 
-  ipcMain.handle('window:toggleFullscreen', () => {
+  secureHandle('window:toggleFullscreen', () => {
     if (!state.mainWindow) return false;
     const next = !state.mainWindow.isFullScreen();
     state.mainWindow.setFullScreen(next);
     return next;
   });
-  ipcMain.handle('window:isFullscreen', () => !!state.mainWindow?.isFullScreen());
+  secureHandle('window:isFullscreen', () => !!state.mainWindow?.isFullScreen());
 
   // 항상 위 (📌). mpv 비디오 창·프리뷰 창은 mainWindow 소유(owned)라 따라온다.
-  ipcMain.handle('window:setAlwaysOnTop', (_evt, flag) => {
+  secureHandle('window:setAlwaysOnTop', (_evt, flag) => {
     if (!state.mainWindow || state.mainWindow.isDestroyed()) return false;
     state.mainWindow.setAlwaysOnTop(!!flag);
     return state.mainWindow.isAlwaysOnTop();
   });
 
   // ---------- Video child window ----------
-  ipcMain.handle('video:setBounds', (_evt, bounds) => {
+  secureHandle('video:setBounds', (_evt, bounds) => {
     if (!bounds || typeof bounds.width !== 'number') return;
     if (bounds.width < 10 || bounds.height < 10) return;
     state.lastVideoBounds = bounds;
     getVideoWindow();
+    setVideoVisible(true);
     syncVideoBounds();
   });
-  ipcMain.handle('video:hide', () => setVideoVisible(false));
-  ipcMain.handle('video:setOverlayActive', (_evt, active) => {
+  secureHandle('video:hide', () => setVideoVisible(false));
+  secureHandle('video:setOverlayActive', (_evt, active) => {
     state.overlayActive = !!active;
-    if (state.overlayActive) {
-      hideSeekPreview();
-      setVideoVisible(false);
-    } else syncVideoBounds();
+    if (state.overlayActive) hideSeekPreview();
+    syncVideoBounds();
   });
 
   // Seekbar hover preview, rendered in a transparent overlay window so it sits
   // above the mpv video window instead of being clipped behind it.
-  ipcMain.handle('preview:overlayShow', (_evt, params) => showSeekPreview(params));
-  ipcMain.handle('preview:overlayHide', () => hideSeekPreview());
+  secureHandle('preview:overlayShow', (_evt, params) => showSeekPreview(params));
+  secureHandle('preview:overlayHide', () => hideSeekPreview());
 
   // ---------- Capture ----------
   // Read the current source path / time / frame / name from mpv. Shared by the
@@ -339,20 +479,38 @@ function registerIpc() {
 
   // Capture via mpv's native screenshot-to-file so the saved image is exactly
   // the frame mpv is displaying (an ffmpeg re-decode can land ±1 frame off).
-  ipcMain.handle('capture:now', async (_evt, opts) => {
+  secureHandle('capture:now', async (_evt, opts) => {
     const ext = opts && opts.format === 'jpg' ? 'jpg' : 'png';
     const m = ensureMpv(onStatus);
     // Metadata first (the filename embeds the timecode), then the shot itself.
     const { sourceName, inputPath, timePos, frame } = await readCurrentFrame();
-    const outPath = uniquePath(
-      path.join(getCaptureDir(), `${sourceName}_${formatTimeForFilename(timePos)}.${ext}`),
+    const preferredPath = path.join(
+      getCaptureDir(),
+      `${sourceName}_${formatTimeForFilename(timePos)}.${ext}`,
     );
-    await m.screenshotToFile(outPath);
+    let outPath = uniquePath(preferredPath);
+    const tempPath = createTempPath(outPath);
+    try {
+      await m.screenshotToFile(tempPath);
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        try {
+          await commitTempFile(tempPath, outPath, { overwrite: false });
+          break;
+        } catch (error) {
+          if (error?.code !== 'EEXIST' || attempt === 9) throw error;
+          outPath = uniquePath(preferredPath);
+        }
+      }
+    } catch (error) {
+      await fs.promises.unlink(tempPath).catch(() => {});
+      throw error;
+    }
+    recordGeneratedPath(outPath);
     return { path: outPath, videoPath: inputPath, time: timePos, frame };
   });
 
   // Copy the current frame straight to the OS clipboard (no disk file kept).
-  ipcMain.handle('capture:copyCurrent', async () => {
+  secureHandle('capture:copyCurrent', async () => {
     const m = ensureMpv(onStatus);
     await readCurrentFrame(); // throws if nothing is playing
     const tmp = path.join(os.tmpdir(), `offcut_clip_${Date.now()}.png`);
@@ -368,9 +526,10 @@ function registerIpc() {
   });
 
   // Copy an existing capture PNG/JPG to the clipboard.
-  ipcMain.handle('capture:copyFile', async (_evt, p) => {
-    if (!isPathInsideCaptureDir(p)) throw new Error('허용되지 않은 경로입니다');
-    const img = nativeImage.createFromPath(p);
+  secureHandle('capture:copyFile', async (_evt, p) => {
+    const canonical = canonicalExistingPath(p);
+    if (!isPathInsideCaptureDir(canonical)) throw new Error('허용되지 않은 경로입니다');
+    const img = nativeImage.createFromPath(canonical);
     if (img.isEmpty()) throw new Error('이미지를 읽을 수 없습니다');
     clipboard.writeImage(img);
     return { ok: true };
@@ -378,47 +537,66 @@ function registerIpc() {
 
   // Start a native OS drag of a capture file so it can be dropped into other
   // apps (Premiere, Photoshop, Explorer, chat windows, …).
-  ipcMain.handle('capture:startDrag', (evt, p) => {
-    if (!isPathInsideCaptureDir(p) || !fs.existsSync(p)) return;
-    let icon = nativeImage.createFromPath(p);
+  secureHandle('capture:startDrag', (evt, p) => {
+    let canonical;
+    try { canonical = canonicalExistingPath(p); } catch { return; }
+    if (!isPathInsideCaptureDir(canonical)) return;
+    let icon = nativeImage.createFromPath(canonical);
     if (icon.isEmpty()) {
       // startDrag requires a non-empty icon; fall back to a 1px transparent one.
       icon = nativeImage.createEmpty();
     } else {
       icon = icon.resize({ width: 128 });
     }
-    evt.sender.startDrag({ file: p, icon });
+    evt.sender.startDrag({ file: canonical, icon });
   });
 
   // Write a base64 data URL (PNG) to a path the user picked — used by the
   // contact-sheet export.
-  ipcMain.handle('capture:saveImage', async (_evt, dataUrl, outPath) => {
-    const safe = validateOutputPath(outPath);
-    const m = /^data:image\/\w+;base64,(.+)$/s.exec(typeof dataUrl === 'string' ? dataUrl : '');
-    if (!m) throw new Error('잘못된 이미지 데이터입니다');
-    await fs.promises.writeFile(safe, Buffer.from(m[1], 'base64'));
+  secureHandle('capture:saveImage', async (_evt, dataUrl, outPath) => {
+    const safe = validateOutputPath(outPath, new Set(['.png', '.jpg', '.jpeg']));
+    if (typeof dataUrl !== 'string' || dataUrl.length > Math.ceil(MAX_CAPTURE_IMAGE_BYTES * 4 / 3) + 128) {
+      throw new Error('이미지 데이터가 허용 크기를 초과했습니다');
+    }
+    const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/=]+)$/s.exec(dataUrl);
+    if (!match) throw new Error('잘못된 이미지 데이터입니다');
+    const data = Buffer.from(match[2], 'base64');
+    if (data.length === 0 || data.length > MAX_CAPTURE_IMAGE_BYTES) {
+      throw new Error('이미지 데이터가 허용 크기를 초과했습니다');
+    }
+    const isPng = data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const isJpeg = data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+    const ext = path.extname(safe).toLowerCase();
+    if ((match[1] === 'png' && (!isPng || ext !== '.png')) ||
+        (match[1] === 'jpeg' && (!isJpeg || !['.jpg', '.jpeg'].includes(ext)))) {
+      throw new Error('이미지 형식과 출력 확장자가 일치하지 않습니다');
+    }
+    await writeFileAtomic(safe, data, undefined, { overwrite: true });
+    recordGeneratedPath(safe);
     return { path: safe };
   });
 
-  ipcMain.handle('capture:getDir', () => getCaptureDir());
-  ipcMain.handle('capture:setDir', async (_evt, dir) => {
+  secureHandle('capture:getDir', () => getCaptureDir());
+  secureHandle('capture:setDir', async (_evt, dir) => {
     if (!dir || typeof dir !== 'string') return null;
-    const normalized = path.normalize(dir);
-    if (!path.isAbsolute(normalized) || normalized.includes('..')) {
-      throw new Error('잘못된 경로입니다');
+    const canonical = canonicalExistingPath(dir);
+    if (!state.approvedOutputDirs.has(pathKey(canonical))) {
+      throw new Error('폴더 선택 창에서 승인되지 않은 캡처 경로입니다');
     }
-    fs.mkdirSync(normalized, { recursive: true });
-    state.captureDir = normalized;
+    state.captureDir = canonical;
     return state.captureDir;
   });
-  ipcMain.handle('capture:reveal', async (_evt, p) => {
-    if (!p) return null;
-    if (fs.existsSync(p)) shell.showItemInFolder(p);
+  secureHandle('capture:reveal', async (_evt, p) => {
+    const canonical = canonicalExistingPath(p);
+    if (!isPathInsideCaptureDir(canonical) && !isGeneratedPath(canonical)) {
+      throw new Error('허용되지 않은 경로입니다');
+    }
+    shell.showItemInFolder(canonical);
     return null;
   });
 
   // ---------- ffprobe ----------
-  ipcMain.handle('ffprobe:info', async (_evt, filePath) => {
+  secureHandle('ffprobe:info', async (_evt, filePath) => {
     const ffprobeBin = resolveBinary('ffprobe.exe');
     if (!ffprobeBin) throw new Error('ffprobe.exe not found in resources/bin');
     const safeInput = validateMediaInput(filePath);
@@ -426,15 +604,15 @@ function registerIpc() {
   });
 
   // ---------- Transcode ----------
-  ipcMain.handle('transcode:presets', () => listPresets());
-  ipcMain.handle('transcode:start', async (_evt, params) => {
+  secureHandle('transcode:presets', () => listPresets());
+  secureHandle('transcode:start', async (_evt, params) => {
     if (state.currentJob) throw new Error('이미 진행 중인 트랜스코딩이 있습니다');
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     if (!params.input || !params.output || !params.presetKey) throw new Error('필수 파라미터 누락');
     const safeInput = validateMediaInput(params.input);
     const safeOutput = validateOutputPath(params.output);
-    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
+    if (pathKey(safeInput) === pathKey(safeOutput)) throw new Error('입력 파일을 출력으로 덮어쓸 수 없습니다');
 
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     state.currentJob = new TranscodeJob({
@@ -452,136 +630,118 @@ function registerIpc() {
     });
 
     try {
-      await state.currentJob.run();
-      return { jobId, output: params.output };
+      const output = await state.currentJob.run();
+      return { jobId, output };
     } finally {
       state.currentJob = null;
     }
   });
-  ipcMain.handle('transcode:cancel', () => {
+  secureHandle('transcode:cancel', () => {
     if (state.currentJob) state.currentJob.cancel();
     return true;
   });
 
   // ---------- Markers (Premiere XMP) ----------
-  ipcMain.handle('markers:exportXmp', async (_evt, params) => {
+  secureHandle('markers:exportXmp', async (_evt, params) => {
     if (!params || !params.videoPath || !Array.isArray(params.captures)) {
       throw new Error('영상 경로 또는 캡처 정보 누락');
     }
     if (params.captures.length === 0) throw new Error('내보낼 캡처가 없습니다');
-    const xmpPath = params.videoPath.replace(/\.[^.]+$/, '.xmp');
+    const videoPath = validateMediaInput(params.videoPath);
+    const preferred = videoPath.replace(/\.[^.]+$/, '.xmp');
+    const xmpPath = fs.existsSync(preferred)
+      ? uniquePath(videoPath.replace(/\.[^.]+$/, '.ssakssak.xmp'))
+      : preferred;
     const content = buildXmpMarkers(params.captures, params.fps || 30);
-    fs.writeFileSync(xmpPath, content, 'utf8');
+    await writeFileAtomic(xmpPath, content, { encoding: 'utf8' }, { overwrite: false });
+    recordGeneratedPath(xmpPath);
     return xmpPath;
   });
 
   // ---------- Notes export (text formats) ----------
-  ipcMain.handle('notes:exportText', async (_evt, content, outPath) => {
+  secureHandle('notes:exportText', async (_evt, content, outPath) => {
     if (typeof content !== 'string') throw new Error('내보낼 내용이 없습니다');
-    if (!outPath || typeof outPath !== 'string') throw new Error('출력 경로가 없습니다');
-    if (outPath.includes('..')) throw new Error('잘못된 출력 경로입니다');
-    const resolved = path.resolve(outPath);
-    const ext = path.extname(resolved).toLowerCase();
-    if (!['.txt', '.csv', '.srt', '.md'].includes(ext)) {
-      throw new Error(`허용되지 않은 형식입니다: ${ext || '(확장자 없음)'}`);
-    }
-    fs.mkdirSync(path.dirname(resolved), { recursive: true });
-    await fs.promises.writeFile(resolved, content, 'utf8');
+    const resolved = validateOutputPath(outPath, new Set(['.txt', '.csv', '.srt', '.md']));
+    await writeFileAtomic(resolved, content, { encoding: 'utf8' }, { overwrite: true });
+    recordGeneratedPath(resolved);
     return { path: resolved };
   });
 
   // ---------- Lossless clip extract ----------
-  ipcMain.handle('clip:extract', async (_evt, params) => {
+  secureHandle('clip:extract', async (_evt, params) => {
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     if (!params || !params.input || !params.output) throw new Error('입력/출력 경로 누락');
     const safeInput = validateMediaInput(params.input);
     const safeOutput = validateOutputPath(params.output);
+    if (pathKey(safeInput) === pathKey(safeOutput)) throw new Error('입력 파일을 출력으로 덮어쓸 수 없습니다');
     const start = Number(params.start);
     const end = Number(params.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       throw new Error('잘못된 시작/끝 시각');
     }
-    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
 
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-y',
-        '-loglevel', 'error',
-        ...FF_PROTOCOL_WHITELIST,
-        '-ss', start.toFixed(3),
-        '-to', end.toFixed(3),
-        '-i', safeInput,
-        '-c', 'copy',
-        '-avoid_negative_ts', 'make_zero',
-        safeOutput,
-      ];
-      const proc = spawn(ffmpegBin, args, { windowsHide: true });
-      let stderr = '';
-      proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
-      proc.on('error', reject);
-      proc.on('close', (code) => {
-        if (code === 0) resolve({ path: safeOutput });
-        else reject(new Error(`ffmpeg clip exited ${code}: ${stderr.trim().slice(-200)}`));
-      });
-    });
+    const output = await runFfmpegAtomic(ffmpegBin, (tempPath) => [
+      '-y',
+      '-loglevel', 'error',
+      ...FF_PROTOCOL_WHITELIST,
+      '-ss', start.toFixed(3),
+      '-to', end.toFixed(3),
+      '-i', safeInput,
+      '-c', 'copy',
+      '-avoid_negative_ts', 'make_zero',
+      tempPath,
+    ], safeOutput, 'ffmpeg clip');
+    return { path: output };
   });
 
   // ---------- Clip export (re-encode, frame-accurate) ----------
   // Unlike clip:extract (-c copy, fast but cuts on keyframes), this re-encodes
   // the In/Out range to a universally-playable H.264 MP4 with exact endpoints.
-  ipcMain.handle('clip:export', async (_evt, params) => {
+  secureHandle('clip:export', async (_evt, params) => {
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     if (!params || !params.input || !params.output) throw new Error('입력/출력 경로 누락');
     const safeInput = validateMediaInput(params.input);
-    const safeOutput = validateOutputPath(params.output);
+    const safeOutput = validateOutputPath(params.output, new Set(['.mp4']));
+    if (pathKey(safeInput) === pathKey(safeOutput)) throw new Error('입력 파일을 출력으로 덮어쓸 수 없습니다');
     const start = Number(params.start);
     const end = Number(params.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
       throw new Error('잘못된 시작/끝 시각');
     }
-    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
     const dur = end - start;
 
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-y',
-        '-loglevel', 'error',
-        ...FF_PROTOCOL_WHITELIST,
-        '-ss', start.toFixed(3),
-        '-i', safeInput,
-        '-t', dur.toFixed(3),
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-crf', '20',
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-movflags', '+faststart',
-        safeOutput,
-      ];
-      const proc = spawn(ffmpegBin, args, { windowsHide: true });
-      let stderr = '';
-      proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
-      proc.on('error', reject);
-      proc.on('close', (code) => {
-        if (code === 0) resolve({ path: safeOutput });
-        else reject(new Error(`ffmpeg export exited ${code}: ${stderr.trim().slice(-200)}`));
-      });
-    });
+    const output = await runFfmpegAtomic(ffmpegBin, (tempPath) => [
+      '-y',
+      '-loglevel', 'error',
+      ...FF_PROTOCOL_WHITELIST,
+      '-ss', start.toFixed(3),
+      '-i', safeInput,
+      '-t', dur.toFixed(3),
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '20',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      tempPath,
+    ], safeOutput, 'ffmpeg export');
+    return { path: output };
   });
 
   // ---------- GIF/WebP clip export ----------
   // In/Out 구간을 짧은 애니메이션으로 (디스코드/슬랙 첨부용). GIF는 palettegen/
   // paletteuse 2단 필터를 한 커맨드로, WebP는 libwebp 무한 루프.
   const GIF_MAX_SEC = 30;
-  ipcMain.handle('clip:gif', async (_evt, params) => {
+  secureHandle('clip:gif', async (_evt, params) => {
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found in resources/bin');
     if (!params || !params.input || !params.output) throw new Error('입력/출력 경로 누락');
     const safeInput = validateMediaInput(params.input);
-    const safeOutput = validateOutputPath(params.output);
+    const safeOutput = validateOutputPath(params.output, new Set(['.gif', '.webp']));
+    if (pathKey(safeInput) === pathKey(safeOutput)) throw new Error('입력 파일을 출력으로 덮어쓸 수 없습니다');
     const start = Number(params.start);
     const end = Number(params.end);
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
@@ -593,92 +753,101 @@ function registerIpc() {
     const fps = Math.max(5, Math.min(30, Number(params.fps) || 15));
     const width = Math.max(120, Math.min(960, Number(params.width) || 480));
     const isWebp = /\.webp$/i.test(safeOutput);
-    fs.mkdirSync(path.dirname(safeOutput), { recursive: true });
 
-    return new Promise((resolve, reject) => {
-      const args = [
-        '-y',
-        '-loglevel', 'error',
-        ...FF_PROTOCOL_WHITELIST,
-        '-ss', start.toFixed(3),
-        '-to', end.toFixed(3),
-        '-i', safeInput,
-        ...(isWebp
-          ? [
-              '-vf', `fps=${fps},scale=${width}:-2:flags=lanczos`,
-              '-c:v', 'libwebp', '-q:v', '75', '-loop', '0', '-an',
-            ]
-          : [
-              '-vf',
-              `fps=${fps},scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3`,
-            ]),
-        safeOutput,
-      ];
-      const proc = spawn(ffmpegBin, args, { windowsHide: true });
-      let stderr = '';
-      proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
-      proc.on('error', reject);
-      proc.on('close', (code) => {
-        if (code === 0) resolve({ path: safeOutput });
-        else reject(new Error(`ffmpeg gif exited ${code}: ${stderr.trim().slice(-200)}`));
-      });
-    });
+    const output = await runFfmpegAtomic(ffmpegBin, (tempPath) => [
+      '-y',
+      '-loglevel', 'error',
+      ...FF_PROTOCOL_WHITELIST,
+      '-ss', start.toFixed(3),
+      '-to', end.toFixed(3),
+      '-i', safeInput,
+      ...(isWebp
+        ? [
+            '-vf', `fps=${fps},scale=${width}:-2:flags=lanczos`,
+            '-c:v', 'libwebp', '-q:v', '75', '-loop', '0', '-an',
+          ]
+        : [
+            '-vf',
+            `fps=${fps},scale=${width}:-2:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3`,
+          ]),
+      tempPath,
+    ], safeOutput, 'ffmpeg gif');
+    return { path: output };
   });
 
   // ---------- Preview (seekbar hover thumbnail + waveform) ----------
-  // Serialize requests so we don't fork dozens of ffmpegs while the user
-  // scrubs the seekbar.
-  let thumbBusy = Promise.resolve();
-  ipcMain.handle('preview:thumbnail', async (_evt, params) => {
+  // Keep at most one active and one pending request. A newer pending request
+  // rejects the older one instead of allowing unbounded scrub queues.
+  const runThumbnail = createCoalescingRunner('썸네일');
+  const runWaveform = createCoalescingRunner('웨이브폼');
+  secureHandle('preview:thumbnail', async (_evt, params) => {
     if (!params || !params.input || !Number.isFinite(Number(params.time))) {
       throw new Error('잘못된 썸네일 파라미터');
     }
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found');
-    const job = thumbBusy.then(() =>
+    const buf = await runThumbnail(() =>
       thumbnailWithFfmpeg(ffmpegBin, params.input, Number(params.time), Number(params.width) || 192),
     );
-    thumbBusy = job.catch(() => {});
-    const buf = await job;
     return `data:image/jpeg;base64,${buf.toString('base64')}`;
   });
 
-  ipcMain.handle('preview:waveform', async (_evt, params) => {
+  secureHandle('preview:waveform', async (_evt, params) => {
     if (!params || !params.input) throw new Error('파일 경로 누락');
     const ffmpegBin = resolveBinary('ffmpeg.exe');
     if (!ffmpegBin) throw new Error('ffmpeg.exe not found');
-    const buf = await waveformWithFfmpeg(
+    const buf = await runWaveform(() => waveformWithFfmpeg(
       ffmpegBin,
       params.input,
       Number(params.width) || 1920,
       Number(params.height) || 60,
       typeof params.rgb === 'string' ? params.rgb : '255,107,53',
-    );
+    ));
     return `data:image/png;base64,${buf.toString('base64')}`;
   });
 
   // ---------- Shell ----------
-  ipcMain.handle('shell:openPath', async (_evt, p) => shell.openPath(p));
-  ipcMain.handle('shell:openExternal', async (_evt, url) => {
-    // Only allow web links — never arbitrary schemes via this bridge.
-    if (typeof url === 'string' && /^https?:\/\//i.test(url)) {
-      await shell.openExternal(url);
+  secureHandle('shell:openPath', async (_evt, p) => {
+    const canonical = canonicalExistingPath(p);
+    const captureRoot = canonicalExistingPath(getCaptureDir());
+    const allowedCaptureRoot = pathKey(canonical) === pathKey(captureRoot);
+    if (!allowedCaptureRoot && !isGeneratedPath(canonical)) {
+      throw new Error('허용되지 않은 경로입니다');
     }
+    return shell.openPath(canonical);
+  });
+  secureHandle('shell:openExternal', async (_evt, value) => {
+    let url;
+    try { url = new URL(value); } catch { throw new Error('잘못된 URL입니다'); }
+    if (url.protocol !== 'https:') throw new Error('HTTPS URL만 열 수 있습니다');
+    await shell.openExternal(url.toString());
   });
 
   // ---------- App lifecycle ----------
-  ipcMain.handle('app:confirmQuit', () => {
+  secureHandle('app:confirmQuit', () => {
+    if (state.quitPromptTimer) {
+      clearTimeout(state.quitPromptTimer);
+      state.quitPromptTimer = null;
+    }
     state.exitConfirmed = true;
     if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.close();
   });
+  secureHandle('app:cancelQuit', () => {
+    if (state.quitPromptTimer) {
+      clearTimeout(state.quitPromptTimer);
+      state.quitPromptTimer = null;
+    }
+    state.exitConfirmed = false;
+  });
 
-  // 렌더러가 구독 준비를 마친 뒤 호출. 대기 중이던 argv 파일을 그때 흘려보낸다
-  // (did-finish-load 시점에는 React effect가 아직 등록 전일 수 있어 레이스 방지).
-  ipcMain.handle('app:rendererReady', () => {
+  // 렌더러가 구독 준비를 마친 뒤 호출. 현재 navigation에 대기 중인 argv
+  // 파일들을 순서대로 전달한다.
+  secureHandle('app:rendererReady', () => {
     state.rendererReady = true;
-    if (state.pendingOpenPath && state.mainWindow && !state.mainWindow.isDestroyed()) {
-      state.mainWindow.webContents.send('app:open-file', state.pendingOpenPath);
-      state.pendingOpenPath = null;
+    if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+    const pending = state.pendingOpenPaths.splice(0);
+    for (const pendingPath of pending) {
+      state.mainWindow.webContents.send('app:open-file', pendingPath);
     }
   });
 }

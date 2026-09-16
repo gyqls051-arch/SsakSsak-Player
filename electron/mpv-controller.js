@@ -1,17 +1,22 @@
 const NodeMpv = require('node-mpv');
 
+const START_TIMEOUT_MS = 15_000;
+const LOAD_TIMEOUT_MS = 20_000;
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 // Whitelist of mpv properties the renderer may read/write through IPC.
 // Anything outside this set is rejected so the IPC bridge can't be used to
 // drive arbitrary mpv property access (e.g. script-opts, ytdl, stream-open
-// behaviours). Keep in sync with the actual app usage:
-//   - ab-loop-a / ab-loop-b : A-B loop (src/hooks/useABLoopSync.ts)
-//   - speed / duration / volume / mute / pause : status reads
-//   - path / filename / filename/no-ext / time-pos / estimated-frame-number :
-//     capture metadata reads (electron/ipc.js capture:now, open())
-//   - loop-file : '한 파일 반복' 재생 모드 (src/App.tsx playMode sync)
-//   - sub-delay / audio-delay / sub-scale : 자막·오디오 싱크와 자막 크기
-//     (src/App.tsx adjustDelay, 우클릭 '동기화'/'자막 크기' 메뉴)
-//   - video-rotate / video-aspect-override / video-zoom : 우클릭 '화면' 메뉴
+// behaviours). Keep in sync with the actual app usage.
 const ALLOWED_SET_PROPS = new Set([
   'ab-loop-a',
   'ab-loop-b',
@@ -50,17 +55,22 @@ const ALLOWED_GET_PROPS = new Set([
 
 class MpvController {
   /**
-   * @param {{ mpvBinary: string, onStatus?: (s: object) => void }} opts
+   * @param {{ mpvBinary: string, wid?: string | number, onStatus?: (s: object) => void }} opts
    */
   constructor(opts) {
     this.opts = opts;
     /** @type {InstanceType<typeof NodeMpv> | null} */
     this.mpv = null;
     this.started = false;
-    // Cached end-of-file flag (kept fresh via the observed 'eof-reached'
-    // property) so play/pause can react instantly without an async round-trip.
+    this.disposed = false;
+    /** @type {Promise<void> | null} */
+    this.startingPromise = null;
+    this.openQueue = Promise.resolve();
+    this.nextLoadId = 0;
+    this.activeLoadId = 0;
     this.eofReached = false;
     this.lastStatus = {
+      loadId: 0,
       filename: null,
       duration: 0,
       position: 0,
@@ -69,11 +79,26 @@ class MpvController {
       volume: 100,
       muted: false,
       eofReached: false,
+      loading: false,
+      error: null,
     };
   }
 
   async _ensureStarted() {
+    if (this.disposed) throw new Error('mpv controller has been disposed');
     if (this.started && this.mpv) return;
+    if (this.startingPromise) return this.startingPromise;
+
+    const starting = this._start();
+    this.startingPromise = starting;
+    try {
+      await starting;
+    } finally {
+      if (this.startingPromise === starting) this.startingPromise = null;
+    }
+  }
+
+  async _start() {
     const args = [
       '--keep-open=always',
       '--idle=yes',
@@ -82,110 +107,120 @@ class MpvController {
       '--osc=no',
       '--osd-bar=no',
       '--no-border',
-      // auto-safe avoids HW decoders whose output surface doesn't blend
-      // with Chromium's compositor (auto/d3d11va can show a black frame).
       '--hwdec=auto-safe',
-      // gpu-next composites cleanly inside a foreign HWND (Chromium).
       '--vo=gpu-next',
-      // UI 볼륨 슬라이더 상한(150%)과 엔진 상한을 일치시킨다.
       '--volume-max=150',
-      // 캡처(screenshot-to-file)가 .jpg 확장자일 때의 품질.
       '--screenshot-jpeg-quality=95',
-      // 파일명이 정확히 같지 않아도 (영상명.kor.srt 등) 자막을 자동 로드.
       '--sub-auto=fuzzy',
-      // 옆 폴더의 자막 전용 디렉토리도 탐색 (Windows 경로 구분자 ';').
       '--sub-file-paths=subs;sub;자막',
     ];
-    // Note: frame capture uses screenshotToFile() (mpv native) so it matches
-    // the displayed frame exactly; seekbar thumbnails still go through ffmpeg.
     if (this.opts.wid) {
       args.push(`--wid=${this.opts.wid}`);
     } else {
       args.push('--force-window=yes', '--title=싹싹김치 플레이어 — Video');
     }
-    this.mpv = new NodeMpv(
+
+    const mpv = new NodeMpv(
       {
         binary: this.opts.mpvBinary,
         audio_only: false,
         time_update: 0.05,
         debug: false,
         verbose: false,
-        auto_restart: true,
+        // The controller owns recovery. node-mpv auto-restart can otherwise
+        // race with dispose/open and leaves the renderer believing a file is loaded.
+        auto_restart: false,
       },
       args,
     );
-    await this.mpv.start();
-    this._wireEvents();
-    // Explicitly observe the properties the UI depends on. node-mpv doesn't
-    // reliably push duration on its own, which left the seekbar stuck at 0.
-    for (const prop of ['duration', 'time-pos', 'pause', 'eof-reached']) {
-      try {
-        await this.mpv.observeProperty(prop);
-      } catch {
-        // older mpv/node-mpv may already observe it — safe to ignore
+    this.mpv = mpv;
+
+    try {
+      await withTimeout(mpv.start(), START_TIMEOUT_MS, 'mpv 시작 시간이 초과되었습니다');
+      if (this.disposed || this.mpv !== mpv) throw new Error('mpv 시작이 취소되었습니다');
+      this._wireEvents(mpv);
+      for (const prop of [
+        'duration',
+        'time-pos',
+        'pause',
+        'eof-reached',
+        'speed',
+        'volume',
+        'mute',
+      ]) {
+        try {
+          await mpv.observeProperty(prop);
+        } catch {
+          // node-mpv observes some properties itself; duplicate observation is harmless.
+        }
       }
+      this.started = true;
+    } catch (error) {
+      if (this.mpv === mpv) this.mpv = null;
+      this.started = false;
+      try {
+        mpv.mpvPlayer?.kill();
+      } catch {
+        // Process may not have been spawned or may already have exited.
+      }
+      throw error;
     }
-    this.started = true;
   }
 
   _emit() {
     this.opts.onStatus?.({ ...this.lastStatus });
   }
 
-  _wireEvents() {
-    if (!this.mpv) return;
+  _wireEvents(mpv) {
+    const isCurrent = () => this.mpv === mpv && !this.disposed;
 
-    this.mpv.on('started', () => {
+    mpv.on('started', () => {
+      if (!isCurrent()) return;
+      const loadId = this.activeLoadId;
       this.lastStatus.paused = false;
       this._emit();
-      // Guarantee the seekbar has a duration even if the property observer is
-      // slow to fire (otherwise duration stays 0 and the bar/seek go dead).
-      this.mpv
+      mpv
         .getDuration()
-        .then((d) => {
-          if (d) {
-            this.lastStatus.duration = Number(d) || 0;
+        .then((duration) => {
+          if (!isCurrent() || loadId !== this.activeLoadId) return;
+          const value = Number(duration);
+          if (Number.isFinite(value) && value > 0) {
+            this.lastStatus.duration = value;
             this._emit();
           }
         })
         .catch(() => {});
     });
-    this.mpv.on('stopped', () => {
+    mpv.on('stopped', () => {
+      if (!isCurrent()) return;
       this.lastStatus.paused = true;
       this._emit();
     });
-    this.mpv.on('paused', () => {
+    mpv.on('paused', () => {
+      if (!isCurrent()) return;
       this.lastStatus.paused = true;
       this._emit();
     });
-    this.mpv.on('resumed', () => {
+    mpv.on('resumed', () => {
+      if (!isCurrent()) return;
       this.lastStatus.paused = false;
       this._emit();
     });
-    this.mpv.on('timeposition', (sec) => {
+    mpv.on('timeposition', (sec) => {
+      if (!isCurrent()) return;
       this.lastStatus.position = Number(sec) || 0;
       this._emit();
     });
-    this.mpv.on('status', (status) => {
-      if (!status || typeof status !== 'object') return;
+    mpv.on('status', (status) => {
+      if (!isCurrent() || !status || typeof status !== 'object') return;
       const { property, value } = status;
       switch (property) {
         case 'duration':
           this.lastStatus.duration = Number(value) || 0;
           break;
-        case 'time-pos':
-          if (value != null) this.lastStatus.position = Number(value) || 0;
-          break;
         case 'eof-reached':
           this.eofReached = !!value;
           this.lastStatus.eofReached = this.eofReached;
-          break; // emit — renderer uses this for auto-advance / repeat modes
-        case 'path':
-          // mpv 'path' is the absolute file path (mpv 'filename' is basename only)
-          if (typeof value === 'string' && value) this.lastStatus.filename = value;
-          break;
-        case 'filename':
-          // ignore — basename only; we keep the absolute path set in open()/'path'
           break;
         case 'volume':
           this.lastStatus.volume = Number(value) || 0;
@@ -196,59 +231,137 @@ class MpvController {
         case 'pause':
           this.lastStatus.paused = !!value;
           break;
+        case 'speed':
+          this.lastStatus.speed = Number(value) || 1;
+          break;
         default:
           return;
       }
       this._emit();
     });
+    mpv.on('crashed', () => this._handleEngineExit(mpv, 'mpv가 비정상 종료되었습니다'));
+    mpv.on('quit', () => this._handleEngineExit(mpv, 'mpv가 종료되었습니다'));
   }
 
-  // Spawn the mpv process ahead of time (idle, no file) so the first open()
-  // doesn't pay the ~hundreds-of-ms cold-start cost. Best-effort.
+  _handleEngineExit(mpv, message) {
+    if (this.mpv !== mpv || this.disposed) return;
+    this.mpv = null;
+    this.started = false;
+    this.eofReached = false;
+    this.lastStatus = {
+      ...this.lastStatus,
+      filename: null,
+      duration: 0,
+      position: 0,
+      paused: true,
+      eofReached: false,
+      loading: false,
+      error: message,
+    };
+    this._emit();
+  }
+
   async warmup() {
     await this._ensureStarted();
   }
 
-  async open(filePath) {
-    await this._ensureStarted();
-    await this.mpv.load(filePath, 'replace');
-    // Emit immediately so the renderer mounts the video area (and the embedded
-    // mpv window becomes visible) without waiting for the play/duration reads.
-    this.lastStatus.filename = filePath;
-    this.lastStatus.position = 0;
-    this.lastStatus.duration = 0;
-    this.lastStatus.paused = false;
-    this.lastStatus.eofReached = false;
-    this.eofReached = false;
-    this._emit();
-    try {
-      await this.mpv.play();
-      const dur = await this.mpv.getDuration();
-      if (dur) this.lastStatus.duration = dur;
-      const sp = await this.mpv.getProperty('speed');
-      if (sp) this.lastStatus.speed = Number(sp) || 1;
-    } catch {
-      // Property reads can race with load completion — duration/speed will
-      // arrive via the property observer instead. Safe to swallow.
-    }
-    this._emit();
+  open(filePath) {
+    const loadId = ++this.nextLoadId;
+    const job = this.openQueue.then(() => this._open(filePath, loadId));
+    this.openQueue = job.catch(() => {});
+    return job;
   }
 
-  // Return the current audio/subtitle/video tracks (simplified) for the
-  // track-switching UI.
+  async _open(filePath, loadId) {
+    await this._ensureStarted();
+    const mpv = this.mpv;
+    if (!mpv) throw new Error('mpv를 시작할 수 없습니다');
+
+    this.activeLoadId = loadId;
+    this.lastStatus = {
+      ...this.lastStatus,
+      loadId,
+      loading: true,
+      error: null,
+      eofReached: false,
+    };
+    this.eofReached = false;
+    this._emit();
+
+    try {
+      // node-mpv resolves load() only after mpv emits start-file + file-loaded.
+      await withTimeout(
+        mpv.load(filePath, 'replace'),
+        LOAD_TIMEOUT_MS,
+        '영상 로드 시간이 초과되었습니다',
+      );
+      if (this.disposed || this.mpv !== mpv) throw new Error('영상 로드가 취소되었습니다');
+
+      // A newer request may already be waiting. Do not publish or post-process
+      // this transient file; the queue will immediately load the latest request.
+      if (loadId !== this.nextLoadId) return { loadId, stale: true };
+
+      this.lastStatus = {
+        ...this.lastStatus,
+        loadId,
+        filename: filePath,
+        position: 0,
+        duration: 0,
+        paused: false,
+        eofReached: false,
+        loading: false,
+        error: null,
+      };
+      this._emit();
+
+      await mpv.play();
+      const values = await Promise.allSettled([
+        mpv.getDuration(),
+        mpv.getProperty('speed'),
+        mpv.getProperty('volume'),
+        mpv.getProperty('mute'),
+      ]);
+      if (loadId === this.activeLoadId && loadId === this.nextLoadId) {
+        const [duration, speed, volume, muted] = values;
+        if (duration.status === 'fulfilled') this.lastStatus.duration = Number(duration.value) || 0;
+        if (speed.status === 'fulfilled') this.lastStatus.speed = Number(speed.value) || 1;
+        if (volume.status === 'fulfilled') this.lastStatus.volume = Number(volume.value) || 0;
+        if (muted.status === 'fulfilled') this.lastStatus.muted = !!muted.value;
+        this._emit();
+      }
+      return { loadId, stale: false };
+    } catch (error) {
+      if (loadId === this.activeLoadId && loadId === this.nextLoadId) {
+        this.lastStatus = {
+          ...this.lastStatus,
+          loadId,
+          filename: null,
+          duration: 0,
+          position: 0,
+          paused: true,
+          eofReached: false,
+          loading: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+        this._emit();
+      }
+      throw error;
+    }
+  }
+
   async getTracks() {
     await this._ensureStarted();
     try {
       const list = await this.mpv.getProperty('track-list');
       if (!Array.isArray(list)) return [];
-      return list.map((t) => ({
-        id: t.id,
-        type: t.type, // 'video' | 'audio' | 'sub'
-        title: t.title || '',
-        lang: t.lang || '',
-        codec: t.codec || '',
-        selected: !!t.selected,
-        external: !!t.external,
+      return list.map((track) => ({
+        id: track.id,
+        type: track.type,
+        title: track.title || '',
+        lang: track.lang || '',
+        codec: track.codec || '',
+        selected: !!track.selected,
+        external: !!track.external,
       }));
     } catch {
       return [];
@@ -259,14 +372,13 @@ class MpvController {
     await this._ensureStarted();
     switch (cmd) {
       case 'play':
-        // Restart from the top if we're sitting at end-of-file (cached flag).
-        if (this.eofReached) this.mpv.seek(0, 'absolute');
+        if (this.eofReached) await this.mpv.seek(0, 'absolute');
         return this.mpv.play();
       case 'pause':
         return this.mpv.pause();
       case 'togglePause':
         if (this.eofReached) {
-          this.mpv.seek(0, 'absolute');
+          await this.mpv.seek(0, 'absolute');
           return this.mpv.play();
         }
         return this.mpv.togglePause();
@@ -280,31 +392,39 @@ class MpvController {
         return this.mpv.command('frame-back-step', []);
       case 'toggleFullscreen':
         return this.mpv.toggleFullscreen();
-      case 'speed':
-        return this.mpv.speed(Number(args[0]));
-      case 'volume':
-        return this.mpv.volume(Number(args[0]));
-      case 'mute':
-        return this.mpv.mute();
+      case 'speed': {
+        const value = Number(args[0]);
+        const result = await this.mpv.speed(value);
+        this.lastStatus.speed = value;
+        this._emit();
+        return result;
+      }
+      case 'volume': {
+        const value = Math.max(0, Math.min(150, Number(args[0])));
+        const result = await this.mpv.volume(value);
+        this.lastStatus.volume = value;
+        this._emit();
+        return result;
+      }
+      case 'mute': {
+        const result = await this.mpv.mute();
+        this.lastStatus.muted = !this.lastStatus.muted;
+        this._emit();
+        return result;
+      }
       case 'setAudio':
         return this.mpv.setProperty('aid', args[0]);
       case 'setSub':
-        // pass a track id number, or 'no' to turn subtitles off
         return this.mpv.setProperty('sid', args[0]);
       case 'addSub':
-        // load an external subtitle file and select it
         return this.mpv.command('sub-add', [String(args[0]), 'select']);
       default:
-        // Only the explicitly handled commands above are permitted via IPC.
-        // Reject anything else instead of forwarding raw commands to mpv.
         throw new Error(`Disallowed mpv command: ${String(cmd)}`);
     }
   }
 
   async screenshotToFile(outputPath) {
     await this._ensureStarted();
-    // mpv prefers forward slashes; backslashes work but can trip the JSON IPC.
-    // 'video' flag = source resolution, no subtitles / OSD.
     const normalized = outputPath.replace(/\\/g, '/');
     return this.mpv.command('screenshot-to-file', [normalized, 'video']);
   }
@@ -314,7 +434,20 @@ class MpvController {
       throw new Error(`Disallowed mpv property (set): ${String(name)}`);
     }
     await this._ensureStarted();
-    return this.mpv.setProperty(name, value);
+    const result = await this.mpv.setProperty(name, value);
+    if (name === 'speed') this.lastStatus.speed = Number(value) || 1;
+    if (name === 'volume') this.lastStatus.volume = Number(value) || 0;
+    if (name === 'mute') this.lastStatus.muted = !!value;
+    if (name === 'pause') this.lastStatus.paused = !!value;
+    if (['speed', 'volume', 'mute', 'pause'].includes(name)) this._emit();
+    return result;
+  }
+
+  async setABLoop(inPoint, outPoint) {
+    await this._ensureStarted();
+    const a = Number.isFinite(inPoint) ? inPoint : 'no';
+    const b = Number.isFinite(outPoint) ? outPoint : 'no';
+    await this.mpv.setMultipleProperties({ 'ab-loop-a': a, 'ab-loop-b': b });
   }
 
   async getProperty(name) {
@@ -326,15 +459,20 @@ class MpvController {
   }
 
   dispose() {
-    if (this.mpv) {
+    this.disposed = true;
+    this.started = false;
+    this.nextLoadId += 1;
+    const mpv = this.mpv;
+    this.mpv = null;
+    if (!mpv) return Promise.resolve();
+
+    return withTimeout(Promise.resolve(mpv.quit()), 2_000, 'mpv 종료 시간이 초과되었습니다').catch(() => {
       try {
-        this.mpv.quit();
+        mpv.mpvPlayer?.kill('SIGKILL');
       } catch {
-        // mpv process may already be gone; safe to ignore.
+        // Process already exited.
       }
-      this.mpv = null;
-      this.started = false;
-    }
+    });
   }
 }
 

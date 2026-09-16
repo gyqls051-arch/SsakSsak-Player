@@ -1,4 +1,13 @@
-const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const {
+  commitTempFile,
+  createTempPath,
+  recordGeneratedPath,
+  spawnTracked,
+} = require('./utils.js');
+
+const TRANSCODE_TIMEOUT_MS = 6 * 60 * 60 * 1_000;
+const MAX_STDERR_BYTES = 256 * 1024;
 
 // ---------- helpers ----------
 
@@ -175,12 +184,17 @@ class TranscodeJob {
 
     this.ffmpegBin = ffmpegBin;
     this.preset = preset;
+    this.input = input;
+    this.output = output;
+    this.tempOutput = createTempPath(output);
     // Restrict ffmpeg to local file/pipe protocols so a crafted input path
     // can't be interpreted as a network/concat/subfile protocol URL. The
     // whitelist must precede the first -i, so prepend it to the preset args.
-    this.args = ['-protocol_whitelist', 'file,pipe', ...preset.buildArgs({ input, output, duration, inputBitrate })];
-    this.input = input;
-    this.output = output;
+    this.args = [
+      '-protocol_whitelist',
+      'file,pipe',
+      ...preset.buildArgs({ input, output: this.tempOutput, duration, inputBitrate }),
+    ];
     this.duration = duration;
     this.onProgress = onProgress;
     this.proc = null;
@@ -190,14 +204,36 @@ class TranscodeJob {
 
   run() {
     return new Promise((resolve, reject) => {
-      this.proc = spawn(this.ffmpegBin, this.args, { windowsHide: true });
+      let settled = false;
+      const rejectOnce = async (error) => {
+        if (settled) return;
+        settled = true;
+        this.proc = null;
+        await fs.promises.unlink(this.tempOutput).catch(() => {});
+        reject(error);
+      };
+      const resolveOnce = (value) => {
+        if (settled) return;
+        settled = true;
+        this.proc = null;
+        resolve(value);
+      };
+
+      this.proc = spawnTracked(
+        this.ffmpegBin,
+        this.args,
+        { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] },
+        TRANSCODE_TIMEOUT_MS,
+      );
 
       this.proc.stderr.on('data', (chunk) => {
         const text = chunk.toString('utf8');
         for (const line of text.split(/\r?\n/)) {
           if (!line.trim()) continue;
-          this.stderrTail.push(line);
-          if (this.stderrTail.length > 30) this.stderrTail.shift();
+          this.stderrTail.push(line.slice(-4_096));
+          while (Buffer.byteLength(this.stderrTail.join('\n'), 'utf8') > MAX_STDERR_BYTES) {
+            this.stderrTail.shift();
+          }
         }
         const tm = text.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
         if (tm) {
@@ -207,21 +243,22 @@ class TranscodeJob {
         }
       });
 
-      this.proc.on('error', (e) => {
-        this.proc = null;
-        reject(e);
-      });
+      this.proc.on('error', (error) => void rejectOnce(error));
 
       this.proc.on('close', (code) => {
+        const proc = this.proc;
         const wasCancelled = this.cancelled;
-        this.proc = null;
         if (wasCancelled) {
-          reject(new Error('사용자에 의해 취소됨'));
+          void rejectOnce(new Error('사용자에 의해 취소됨'));
+        } else if (proc?.ssakssakTimedOut) {
+          void rejectOnce(new Error('트랜스코딩 실행 시간이 초과되었습니다'));
         } else if (code === 0) {
-          resolve();
+          commitTempFile(this.tempOutput, this.output)
+            .then(() => resolveOnce(recordGeneratedPath(this.output)))
+            .catch((error) => void rejectOnce(error));
         } else {
           const tail = this.stderrTail.slice(-8).join('\n');
-          reject(new Error(`ffmpeg exited ${code}\n${tail}`));
+          void rejectOnce(new Error(`ffmpeg exited ${code}\n${tail}`));
         }
       });
     });

@@ -164,23 +164,45 @@ export default function App() {
   const overlayOpen = transcodeOpen || helpOpen || previewCapture !== null || exitAdOpen;
   const videoAreaRef = useVideoEmbed(filename, overlayOpen, `${panelOpen}-${isFullscreen}`);
 
+  const openRequestRef = useRef(0);
+
   // ---- Handlers ----
-  const openFile = useCallback(
-    async (path?: string) => {
+  const performOpen = useCallback(
+    async (
+      path: string | undefined,
+      preservePlaylist: boolean,
+      existingRequestId?: number,
+    ) => {
+      const requestId = existingRequestId ?? ++openRequestRef.current;
       try {
+        if (requestId !== openRequestRef.current) return;
+        if (noticeTimer.current) {
+          clearTimeout(noticeTimer.current);
+          noticeTimer.current = null;
+        }
         setError(null);
+
         const target = path ?? (await window.offcut.openVideoDialog());
-        if (!target) return;
-        await window.offcut.mpv.open(target);
+        if (!target || requestId !== openRequestRef.current) return;
+        if (!preservePlaylist) usePlaylistStore.getState().clear();
+
+        const result = await window.offcut.mpv.open(target);
+        if (requestId !== openRequestRef.current || result.stale) return;
+
         addRecent(target);
         // 이전 파일의 화면 조정(회전/비율/줌)이 다음 파일에 남지 않게 리셋.
-        window.offcut.mpv.setProperty('video-rotate', 0);
-        window.offcut.mpv.setProperty('video-aspect-override', '-1');
-        window.offcut.mpv.setProperty('video-zoom', 0);
+        await Promise.allSettled([
+          window.offcut.mpv.setProperty('video-rotate', 0),
+          window.offcut.mpv.setProperty('video-aspect-override', '-1'),
+          window.offcut.mpv.setProperty('video-zoom', 0),
+        ]);
+        if (requestId !== openRequestRef.current) return;
+
         // 이어보기: 저장된 위치가 있으면 그 지점부터 (시크릿 모드 제외).
         const saved = lookupPosition(target);
         if (saved && !useSettingsStore.getState().secret) {
           await window.offcut.mpv.command('seek', saved.position, 'absolute');
+          if (requestId !== openRequestRef.current) return;
           showTransient(
             {
               kind: 'info',
@@ -188,6 +210,12 @@ export default function App() {
               action: {
                 label: '처음부터',
                 onClick: () => {
+                  if (
+                    requestId !== openRequestRef.current ||
+                    usePlayerStore.getState().filename !== target
+                  ) {
+                    return;
+                  }
                   window.offcut.mpv.command('seek', 0, 'absolute');
                   removePosition(target);
                   setNotice(null);
@@ -198,29 +226,49 @@ export default function App() {
           );
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (requestId === openRequestRef.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       }
     },
     [addRecent, setError, showTransient],
   );
 
+  // 대화상자/최근 항목/드롭/OS 파일은 기존 폴더 재생목록과 독립적이다.
+  const openStandaloneFile = useCallback(
+    (path?: string) => performOpen(path, false),
+    [performOpen],
+  );
+  // 폴더 탭 및 자동 다음 파일은 현재 재생목록을 유지한다.
+  const openPlaylistFile = useCallback(
+    (path: string) => performOpen(path, true),
+    [performOpen],
+  );
+
   const openFolder = useCallback(async () => {
+    const requestId = ++openRequestRef.current;
     try {
+      if (noticeTimer.current) {
+        clearTimeout(noticeTimer.current);
+        noticeTimer.current = null;
+      }
       setError(null);
       const r = await window.offcut.openFolder();
-      if (!r) return;
+      if (!r || requestId !== openRequestRef.current) return;
       if (r.files.length === 0) {
         setNotice({ kind: 'info', text: '이 폴더에 재생 가능한 영상이 없습니다' });
         return;
       }
       usePlaylistStore.getState().setPlaylist(r.folder, r.files);
-      await openFile(r.files[0]);
+      await performOpen(r.files[0], true, requestId);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (requestId === openRequestRef.current) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     }
-  }, [openFile, setError]);
+  }, [performOpen, setError]);
 
-  const dragOver = useDragDrop(openFile, setError);
+  const dragOver = useDragDrop(openStandaloneFile, setError);
 
   const handleCapture = useCallback(async () => {
     try {
@@ -504,19 +552,19 @@ export default function App() {
     const norm = (p: string) => p.replace(/\//g, '\\').toLowerCase();
     const idx = files.findIndex((f) => norm(f) === norm(cur));
     if (idx >= 0 && idx + 1 < files.length) {
-      void openFile(files[idx + 1]);
+      void openPlaylistFile(files[idx + 1]);
       return;
     }
     if (mode === 'loop-all') {
       if (files.length > 0 && idx >= 0) {
-        void openFile(files[0]);
+        void openPlaylistFile(files[0]);
         return;
       }
       // 재생목록 없이 단일 파일 → 처음부터 재생.
       window.offcut.mpv.command('seek', 0, 'absolute');
       window.offcut.mpv.command('play');
     }
-  }, [eofReached, openFile]);
+  }, [eofReached, openPlaylistFile]);
 
   // ---- 챕터: duration이 도착하면(=로드 완료) 챕터 목록을 읽는다 ----
   const hasDuration = duration > 0;
@@ -565,11 +613,11 @@ export default function App() {
 
   // ---- OS에서 넘어온 파일 열기 (파일 연결 / 두 번째 인스턴스) ----
   useEffect(() => {
-    const off = window.offcut.app.onOpenFile((p) => void openFile(p));
+    const off = window.offcut.app.onOpenFile((p) => void openStandaloneFile(p));
     // 구독 등록 후 준비 신고 → main이 대기 중이던 argv 파일을 흘려보낸다.
     window.offcut.app.rendererReady();
     return off;
-  }, [openFile]);
+  }, [openStandaloneFile]);
 
   // ---- Video click interactions ----
   // The mpv child window is click-through (setIgnoreMouseEvents), so these fire
@@ -699,7 +747,7 @@ export default function App() {
           window.offcut.window.toggleFullscreen();
           break;
         case 'open':
-          openFile();
+          openStandaloneFile();
           break;
       }
     });
@@ -712,13 +760,14 @@ export default function App() {
     handleExtractClip,
     handleExportClip,
     handleExportGif,
-    openFile,
+    openStandaloneFile,
     adjustDelay,
   ]);
 
   // ---- Keyboard ----
   useKeyBindings({
-    onOpenFile: () => openFile(),
+    enabled: !overlayOpen,
+    onOpenFile: () => openStandaloneFile(),
     onCapture: handleCapture,
     onToggleHelp: () => setHelpOpen((o) => !o),
     onSetInPoint: handleSetIn,
@@ -755,7 +804,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={() => openFile()}
+            onClick={() => openStandaloneFile()}
             className="text-xs px-3 py-1 rounded bg-accent hover:bg-accent-hover text-black font-semibold"
             title="열기 (Ctrl+O)"
           >
@@ -776,7 +825,7 @@ export default function App() {
           >
             용량 ↓
           </button>
-          <RecentFilesMenu onOpen={openFile} />
+          <RecentFilesMenu onOpen={openStandaloneFile} />
           <button
             onClick={handleTogglePin}
             className={`text-xs px-2 py-1 rounded transition ${
@@ -807,7 +856,7 @@ export default function App() {
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 relative bg-black">
           {!filename ? (
-            <StartScreen onOpenDialog={() => openFile()} onOpenFile={openFile} />
+            <StartScreen onOpenDialog={() => openStandaloneFile()} onOpenFile={openStandaloneFile} />
           ) : (
             <div
               ref={videoAreaRef}
@@ -823,7 +872,7 @@ export default function App() {
           <SidePanel
             onPreviewCapture={setPreviewCapture}
             onExportXmp={handleExportXmp}
-            onOpenFile={openFile}
+            onOpenFile={openPlaylistFile}
             onOpenFolder={openFolder}
             onAddNote={handleAddNote}
             onExportNotes={handleExportNotes}

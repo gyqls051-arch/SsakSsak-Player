@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { EXIT_BANNER } from '../data/promos';
 import PromoBanner from './PromoBanner';
 
@@ -8,14 +8,19 @@ interface Props {
 }
 
 export default function ExitAdModal({ open, onClose }: Props) {
+  const cancelQuit = useCallback(() => {
+    void window.offcut.app.cancelQuit();
+    onClose();
+  }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') cancelQuit();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, cancelQuit]);
 
   if (!open) return null;
 
@@ -26,7 +31,7 @@ export default function ExitAdModal({ open, onClose }: Props) {
           <PromoBanner banner={EXIT_BANNER} rounded="rounded-lg" />
         </div>
         <div className="flex border-t border-white/5">
-          <button onClick={onClose} className="flex-1 py-3 text-sm text-white/70 hover:bg-white/5">
+          <button onClick={cancelQuit} className="flex-1 py-3 text-sm text-white/70 hover:bg-white/5">
             계속 사용
           </button>
           <button

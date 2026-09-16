@@ -16,18 +16,19 @@ export function useSeekThumbnail(filename: string | null, hoverTime: number | nu
   const tokenRef = useRef(0);
 
   useEffect(() => {
+    const token = ++tokenRef.current;
+
     if (lastFileRef.current !== filename) {
       cacheRef.current.clear();
       lastFileRef.current = filename;
       setDataUrl(null);
     }
-  }, [filename]);
 
-  useEffect(() => {
     if (!filename || hoverTime === null) {
       setDataUrl(null);
       return;
     }
+
     const bucket = Math.round(hoverTime);
     const cache = cacheRef.current;
     const cached = cache.get(bucket);
@@ -38,7 +39,7 @@ export function useSeekThumbnail(filename: string | null, hoverTime: number | nu
       setDataUrl(cached);
       return;
     }
-    const token = ++tokenRef.current;
+
     const timer = window.setTimeout(() => {
       window.offcut.preview
         .thumbnail({ input: filename, time: bucket, width: 192 })
@@ -51,9 +52,15 @@ export function useSeekThumbnail(filename: string | null, hoverTime: number | nu
           cache.set(bucket, url);
           setDataUrl(url);
         })
-        .catch(() => { /* ignore — keep last good thumb */ });
+        .catch(() => {
+          /* ignore — keep last good thumb */
+        });
     }, 80);
-    return () => window.clearTimeout(timer);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (token === tokenRef.current) tokenRef.current += 1;
+    };
   }, [filename, hoverTime]);
 
   return dataUrl;

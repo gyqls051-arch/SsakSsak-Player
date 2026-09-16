@@ -1,8 +1,12 @@
 const { app } = require('electron');
 const { spawn } = require('node:child_process');
+const { createHash, randomBytes } = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs');
 const state = require('./state.js');
+
+const MAX_COMPONENT_BYTES = 180;
+const CHILD_KILL_GRACE_MS = 1_500;
 
 function resolveBinary(name) {
   const local = path.join(__dirname, '..', 'resources', 'bin', name);
@@ -30,9 +34,179 @@ function formatTimeForFilename(seconds) {
 }
 
 function sanitizeBasename(name) {
-  // Strip Windows-reserved characters so generated PNG / clip filenames are safe.
-  // eslint-disable-next-line no-control-regex -- 제어문자(\x00-\x1f) 제거가 목적
-  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+  // Leave room for generated timecodes/extensions and keep the component under
+  // common filesystem byte limits. A hash suffix makes truncated names stable
+  // and prevents two long, similarly-prefixed source names from colliding.
+  const original = String(name || 'capture');
+  let safe = original
+    // eslint-disable-next-line no-control-regex -- 제어문자(\x00-\x1f) 제거가 목적
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/[ .]+$/g, '') || 'capture';
+  if (Buffer.byteLength(safe, 'utf8') <= MAX_COMPONENT_BYTES) return safe;
+
+  const suffix = `-${createHash('sha256').update(original).digest('hex').slice(0, 12)}`;
+  const budget = MAX_COMPONENT_BYTES - Buffer.byteLength(suffix, 'utf8');
+  let prefix = '';
+  for (const char of safe) {
+    if (Buffer.byteLength(prefix + char, 'utf8') > budget) break;
+    prefix += char;
+  }
+  safe = prefix.replace(/[ .]+$/g, '') || 'capture';
+  return `${safe}${suffix}`;
+}
+
+function pathKey(value) {
+  const normalized = path.normalize(value);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function canonicalExistingPath(value) {
+  if (!value || typeof value !== 'string' || !path.isAbsolute(value)) {
+    throw new Error('정규화된 절대 경로가 필요합니다');
+  }
+  return fs.realpathSync.native(path.normalize(value));
+}
+
+function canonicalOutputPath(value) {
+  if (!value || typeof value !== 'string' || !path.isAbsolute(value)) {
+    throw new Error('정규화된 절대 출력 경로가 필요합니다');
+  }
+  const normalized = path.normalize(value);
+  const base = path.basename(normalized);
+  if (!base || base === '.' || base === '..') throw new Error('잘못된 출력 파일명입니다');
+  const parent = fs.realpathSync.native(path.dirname(normalized));
+  return path.join(parent, base);
+}
+
+function isPathContained(base, target, allowEqual = false) {
+  let realBase;
+  let realTarget;
+  try {
+    realBase = canonicalExistingPath(base);
+    realTarget = canonicalExistingPath(target);
+  } catch {
+    return false;
+  }
+  const relative = path.relative(realBase, realTarget);
+  if (!relative) return allowEqual;
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function createTempPath(finalPath) {
+  const ext = path.extname(finalPath);
+  return path.join(
+    path.dirname(finalPath),
+    `.ssakssak-${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}${ext}`,
+  );
+}
+
+async function commitTempFile(tempPath, finalPath, { overwrite = true } = {}) {
+  if (!overwrite) {
+    await fs.promises.link(tempPath, finalPath);
+    await fs.promises.unlink(tempPath);
+    return finalPath;
+  }
+
+  // Temp and final live in the same directory, so rename uses the platform's
+  // replace-existing primitive without an intermediate state where final is
+  // moved away. Node's rename contract replaces an existing file.
+  await fs.promises.rename(tempPath, finalPath);
+  return finalPath;
+}
+
+async function writeFileAtomic(finalPath, data, options, commitOptions) {
+  const tempPath = createTempPath(finalPath);
+  try {
+    await fs.promises.writeFile(tempPath, data, { ...options, flag: 'wx' });
+    return await commitTempFile(tempPath, finalPath, commitOptions);
+  } catch (error) {
+    await fs.promises.unlink(tempPath).catch(() => {});
+    throw error;
+  }
+}
+
+function recordGeneratedPath(value) {
+  const canonical = canonicalExistingPath(value);
+  state.generatedPaths.add(pathKey(canonical));
+  return canonical;
+}
+
+function isGeneratedPath(value) {
+  try {
+    return state.generatedPaths.has(pathKey(canonicalExistingPath(value)));
+  } catch {
+    return false;
+  }
+}
+
+function trackOperation(promise) {
+  const tracked = Promise.resolve(promise);
+  state.activeOperations.add(tracked);
+  const remove = () => state.activeOperations.delete(tracked);
+  tracked.then(remove, remove);
+  return tracked;
+}
+
+function spawnTracked(command, args, options = {}, timeoutMs = 0) {
+  const proc = spawn(command, args, options);
+  state.childProcesses.add(proc);
+  proc.ssakssakTimedOut = false;
+  let timer = null;
+  if (timeoutMs > 0) {
+    timer = setTimeout(() => {
+      proc.ssakssakTimedOut = true;
+      try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+      setTimeout(() => {
+        if (proc.exitCode === null && proc.signalCode === null) {
+          try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+        }
+      }, CHILD_KILL_GRACE_MS).unref?.();
+    }, timeoutMs);
+    timer.unref?.();
+  }
+  const cleanup = () => {
+    if (timer) clearTimeout(timer);
+    state.childProcesses.delete(proc);
+  };
+  proc.once('close', cleanup);
+  proc.once('error', cleanup);
+  return proc;
+}
+
+function terminateChildProcess(proc, graceMs = CHILD_KILL_GRACE_MS) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
+    state.childProcesses.delete(proc);
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    let killTimer = null;
+    let doneTimer = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) clearTimeout(killTimer);
+      if (doneTimer) clearTimeout(doneTimer);
+      state.childProcesses.delete(proc);
+      resolve();
+    };
+    proc.once('close', finish);
+    try { proc.kill('SIGTERM'); } catch { finish(); return; }
+    killTimer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch { /* already exited */ }
+    }, graceMs);
+    doneTimer = setTimeout(finish, graceMs + 1_000);
+    killTimer.unref?.();
+    doneTimer.unref?.();
+  });
+}
+
+async function terminateTrackedChildren() {
+  // Closing one process can release a coalesced task. Drain until no tracked
+  // process remains rather than relying on a single snapshot.
+  while (state.childProcesses.size > 0) {
+    await Promise.allSettled([...state.childProcesses].map((proc) => terminateChildProcess(proc)));
+  }
 }
 
 function getHwnd(win) {
@@ -117,11 +291,7 @@ function validateMediaInput(input) {
 const FF_PROTOCOL_WHITELIST = ['-protocol_whitelist', 'file,pipe'];
 
 function isPathInsideCaptureDir(target) {
-  const norm = path.normalize(target).toLowerCase();
-  const allowed = path.normalize(getCaptureDir()).toLowerCase();
-  if (norm === allowed) return false;
-  const sep = path.sep.toLowerCase();
-  return norm.startsWith(allowed + sep);
+  return isPathContained(getCaptureDir(), target, false);
 }
 
 // Return a path that doesn't collide with an existing file by appending
@@ -158,14 +328,30 @@ function thumbnailWithFfmpeg(ffmpegBin, input, timeSeconds, width = 192) {
       '-q:v', '5',
       'pipe:1',
     ];
-    const proc = spawn(ffmpegBin, args, { windowsHide: true });
+    const proc = spawnTracked(ffmpegBin, args, { windowsHide: true }, 15_000);
     const chunks = [];
+    let outputBytes = 0;
     let stderr = '';
-    proc.stdout.on('data', (c) => chunks.push(c));
-    proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
+    let overflow = false;
+    proc.stdout.on('data', (chunk) => {
+      outputBytes += chunk.length;
+      if (outputBytes > 8 * 1024 * 1024) {
+        overflow = true;
+        try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+        return;
+      }
+      chunks.push(chunk);
+    });
+    proc.stderr.on('data', (chunk) => {
+      if (stderr.length < 64 * 1024) stderr += chunk.toString('utf8').slice(0, 64 * 1024 - stderr.length);
+    });
     proc.on('error', reject);
     proc.on('close', (code) => {
-      if (code === 0 && chunks.length) {
+      if (proc.ssakssakTimedOut) {
+        reject(new Error('ffmpeg thumbnail timed out'));
+      } else if (overflow) {
+        reject(new Error('ffmpeg thumbnail output exceeded limit'));
+      } else if (code === 0 && chunks.length) {
         resolve(Buffer.concat(chunks));
       } else {
         reject(new Error(`ffmpeg thumb exited ${code}: ${stderr.trim().slice(-200)}`));
@@ -179,9 +365,11 @@ function waveformWithFfmpeg(ffmpegBin, input, width = 1920, height = 60, rgb = '
   return new Promise((resolve, reject) => {
     const w = Math.max(200, Math.min(4096, Number(width) || 1920));
     const h = Math.max(30, Math.min(200, Number(height) || 60));
-    const colorHex = rgb
-      .split(',')
-      .map((n) => Number(n).toString(16).padStart(2, '0'))
+    const components = String(rgb).split(',').map((n) => Math.max(0, Math.min(255, Number(n) || 0)));
+    while (components.length < 3) components.push(0);
+    const colorHex = components
+      .slice(0, 3)
+      .map((n) => Math.round(n).toString(16).padStart(2, '0'))
       .join('');
     const safeInput = validateMediaInput(input);
     const args = [
@@ -197,14 +385,30 @@ function waveformWithFfmpeg(ffmpegBin, input, width = 1920, height = 60, rgb = '
       '-vcodec', 'png',
       'pipe:1',
     ];
-    const proc = spawn(ffmpegBin, args, { windowsHide: true });
+    const proc = spawnTracked(ffmpegBin, args, { windowsHide: true }, 30_000);
     const chunks = [];
+    let outputBytes = 0;
     let stderr = '';
-    proc.stdout.on('data', (c) => chunks.push(c));
-    proc.stderr.on('data', (c) => (stderr += c.toString('utf8')));
+    let overflow = false;
+    proc.stdout.on('data', (chunk) => {
+      outputBytes += chunk.length;
+      if (outputBytes > 16 * 1024 * 1024) {
+        overflow = true;
+        try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+        return;
+      }
+      chunks.push(chunk);
+    });
+    proc.stderr.on('data', (chunk) => {
+      if (stderr.length < 64 * 1024) stderr += chunk.toString('utf8').slice(0, 64 * 1024 - stderr.length);
+    });
     proc.on('error', reject);
     proc.on('close', (code) => {
-      if (code === 0 && chunks.length) {
+      if (proc.ssakssakTimedOut) {
+        reject(new Error('ffmpeg waveform timed out'));
+      } else if (overflow) {
+        reject(new Error('ffmpeg waveform output exceeded limit'));
+      } else if (code === 0 && chunks.length) {
         resolve(Buffer.concat(chunks));
       } else {
         reject(new Error(`ffmpeg waveform exited ${code}: ${stderr.trim().slice(-200)}`));
@@ -218,6 +422,19 @@ module.exports = {
   getCaptureDir,
   formatTimeForFilename,
   sanitizeBasename,
+  pathKey,
+  canonicalExistingPath,
+  canonicalOutputPath,
+  isPathContained,
+  createTempPath,
+  commitTempFile,
+  writeFileAtomic,
+  recordGeneratedPath,
+  isGeneratedPath,
+  trackOperation,
+  spawnTracked,
+  terminateChildProcess,
+  terminateTrackedChildren,
   getHwnd,
   extractFileArg,
   validateMediaInput,

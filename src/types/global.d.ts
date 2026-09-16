@@ -2,6 +2,7 @@ export {};
 
 declare global {
   interface MpvStatus {
+    loadId: number;
     filename: string | null;
     duration: number;
     position: number;
@@ -10,6 +11,8 @@ declare global {
     volume: number;
     muted: boolean;
     eofReached: boolean;
+    loading: boolean;
+    error: string | null;
   }
 
   interface CaptureResult {
@@ -90,7 +93,7 @@ declare global {
       filters?: Array<{ name: string; extensions: string[] }>;
     }) => Promise<string | null>;
     mpv: {
-      open: (filePath: string) => Promise<{ ok: boolean }>;
+      open: (filePath: string) => Promise<{ loadId: number; stale: boolean }>;
       command: (cmd: string, ...args: unknown[]) => Promise<unknown>;
       getTracks: () => Promise<
         Array<{
@@ -104,6 +107,7 @@ declare global {
         }>
       >;
       setProperty: (name: string, value: unknown) => Promise<unknown>;
+      setABLoop: (inPoint: number | null, outPoint: number | null) => Promise<void>;
       getProperty: (name: string) => Promise<unknown>;
       onStatus: (handler: (status: MpvStatus) => void) => () => void;
     };
@@ -195,6 +199,7 @@ declare global {
     };
     app: {
       confirmQuit: () => Promise<void>;
+      cancelQuit: () => Promise<void>;
       onExitAd: (handler: () => void) => () => void;
       rendererReady: () => Promise<void>;
       onOpenFile: (handler: (path: string) => void) => () => void;

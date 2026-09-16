@@ -2,7 +2,8 @@ const { app, BrowserWindow, protocol } = require('electron');
 const state = require('./state.js');
 const { createMainWindow, warmupMpv, openFileInRenderer } = require('./windows.js');
 const { registerIpc, registerProtocols } = require('./ipc.js');
-const { extractFileArg } = require('./utils.js');
+const { cleanupApp } = require('./cleanup.js');
+const { extractFileArg, trackOperation } = require('./utils.js');
 
 // Single instance: a second launch (e.g. double-clicking another video in
 // Explorer) forwards its argv to the running instance and exits.
@@ -25,7 +26,6 @@ if (!gotLock) {
         standard: true,
         secure: true,
         supportFetchAPI: true,
-        bypassCSP: true,
         stream: true,
       },
     },
@@ -34,7 +34,8 @@ if (!gotLock) {
   registerIpc();
 
   // File passed on first launch (file association / "open with").
-  state.pendingOpenPath = extractFileArg(process.argv);
+  const initialOpenPath = extractFileArg(process.argv);
+  if (initialOpenPath) state.pendingOpenPaths.push(initialOpenPath);
 
   app.on('second-instance', (_evt, argv, workingDir) => {
     if (state.mainWindow && !state.mainWindow.isDestroyed()) {
@@ -49,20 +50,47 @@ if (!gotLock) {
     registerProtocols();
     await createMainWindow();
     // Pre-spawn mpv in the background so the first file opens without the
-    // process cold-start lag. Deferred a tick so it doesn't compete with the
-    // initial window paint.
-    setTimeout(warmupMpv, 300);
+    // process cold-start lag. The owned timer is cancelled by cleanup.
+    state.warmupTimer = setTimeout(() => {
+      state.warmupTimer = null;
+      if (state.isQuitting) return;
+      void trackOperation(warmupMpv());
+    }, 300);
+  });
+
+  app.on('before-quit', (event) => {
+    state.isQuitting = true;
+    state.exitConfirmed = true;
+    if (state.cleanupComplete) return;
+    event.preventDefault();
+    void cleanupApp().finally(() => app.quit());
+  });
+
+  app.on('render-process-gone', (_event, webContents) => {
+    if (!state.mainWindow || webContents !== state.mainWindow.webContents) return;
+    state.isQuitting = true;
+    state.exitConfirmed = true;
+    if (!state.mainWindow.isDestroyed()) state.mainWindow.destroy();
+    void cleanupApp().finally(() => app.quit());
   });
 
   app.on('window-all-closed', () => {
-    if (state.mpv) {
-      state.mpv.dispose();
-      state.mpv = null;
-    }
-    if (process.platform !== 'darwin') app.quit();
+    void cleanupApp().finally(() => {
+      if (process.platform !== 'darwin') {
+        app.quit();
+        return;
+      }
+      // macOS keeps the menu-bar app alive after the last window closes.
+      state.cleanupPromise = null;
+      state.cleanupComplete = false;
+      state.isQuitting = false;
+      state.exitConfirmed = false;
+    });
   });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    if (BrowserWindow.getAllWindows().length === 0 && !state.isQuitting) {
+      void createMainWindow();
+    }
   });
 }
