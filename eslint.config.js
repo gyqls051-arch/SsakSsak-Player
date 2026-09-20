@@ -43,7 +43,7 @@ module.exports = tseslint.config(
 
   // Electron main process and CJS config files run on Node (CommonJS).
   {
-    files: ['electron/**/*.js', 'eslint.config.js', 'electron-launcher.js', 'scripts/**/*.js'],
+    files: ['electron/**/*.js', 'eslint.config.js', 'electron-launcher.js', 'scripts/**/*.js', 'tests/**/*.js'],
     extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2022,
