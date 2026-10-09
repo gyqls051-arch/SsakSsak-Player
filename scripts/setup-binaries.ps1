@@ -1,4 +1,4 @@
-# OFFCUT Player - 의존 바이너리 자동 다운로드
+# 싹싹김치 플레이어 - 의존 바이너리 자동 다운로드
 # mpv.exe + ffmpeg.exe + ffprobe.exe 를 resources/bin/ 에 배치합니다.
 # 사용: npm run setup:bin
 
@@ -57,9 +57,10 @@ $ffprobeOut = Join-Path $binDir 'ffprobe.exe'
 if ((Test-Path $ffmpegOut) -and (Test-Path $ffprobeOut)) {
     Write-Host "[skip] ffmpeg.exe + ffprobe.exe already present"
 } else {
-    Write-Host "[ffmpeg] downloading BtbN essentials build..."
+    Write-Host "[ffmpeg] downloading BtbN LGPL build..."
     $ffmpegZip = Join-Path $tmpDir 'ffmpeg.zip'
-    $ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip'
+    # LGPL 빌드 — libx264/x265(GPL) 제외. 인코더는 nvenc/qsv/amf/mf/libopenh264 폴백.
+    $ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-lgpl.zip'
     Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegZip
 
     Write-Host "[ffmpeg] extracting (zip — native PowerShell)..."
@@ -78,6 +79,12 @@ if ((Test-Path $ffmpegOut) -and (Test-Path $ffprobeOut)) {
         Write-Host "[ffprobe] -> $ffprobeOut"
     } else {
         Write-Warning "ffprobe.exe not found in archive"
+    }
+
+    $foundLic = Get-ChildItem -Path $ffmpegExtract -Recurse -Filter 'LICENSE.txt' | Select-Object -First 1
+    if ($foundLic) {
+        Copy-Item $foundLic.FullName (Join-Path $binDir 'LICENSE.txt') -Force
+        Write-Host "[license] -> resources/bin/LICENSE.txt"
     }
 }
 
@@ -110,7 +117,7 @@ if (Test-Path $mpvOut) {
 
     Write-Host "[mpv] using 7z at: $sevenZip"
     Write-Host "[mpv] fetching latest release info..."
-    $headers = @{ 'User-Agent' = 'offcut-player-setup' }
+    $headers = @{ 'User-Agent' = 'ssakssak-player-setup' }
     $rel = Invoke-RestMethod -Uri 'https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest' -Headers $headers
 
     $asset = $rel.assets | Where-Object { $_.name -match '^mpv-x86_64-v3-.*\.7z$' } | Select-Object -First 1

@@ -6,7 +6,7 @@ const os = require('node:os');
 
 const state = require('./state.js');
 const { runFfprobe } = require('./ffprobe.js');
-const { TranscodeJob, listPresets } = require('./transcode.js');
+const { TranscodeJob, listPresets, detectEncoders, encQualityArgs } = require('./transcode.js');
 const { buildXmpMarkers } = require('./xmp.js');
 const {
   resolveBinary,
@@ -614,6 +614,8 @@ function registerIpc() {
     const safeOutput = validateOutputPath(params.output);
     if (pathKey(safeInput) === pathKey(safeOutput)) throw new Error('입력 파일을 출력으로 덮어쓸 수 없습니다');
 
+    const encoders = await detectEncoders(ffmpegBin);
+
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     state.currentJob = new TranscodeJob({
       ffmpegBin,
@@ -622,6 +624,7 @@ function registerIpc() {
       presetKey: params.presetKey,
       duration: params.duration || 0,
       inputBitrate: params.inputBitrate || 0,
+      encoders,
       onProgress: (p) => {
         if (state.mainWindow && !state.mainWindow.isDestroyed()) {
           state.mainWindow.webContents.send('transcode:progress', { jobId, ...p });
@@ -711,6 +714,7 @@ function registerIpc() {
       throw new Error('잘못된 시작/끝 시각');
     }
     const dur = end - start;
+    const [enc] = await detectEncoders(ffmpegBin);
 
     const output = await runFfmpegAtomic(ffmpegBin, (tempPath) => [
       '-y',
@@ -719,9 +723,8 @@ function registerIpc() {
       '-ss', start.toFixed(3),
       '-i', safeInput,
       '-t', dur.toFixed(3),
-      '-c:v', 'libx264',
-      '-preset', 'veryfast',
-      '-crf', '20',
+      '-c:v', enc,
+      ...encQualityArgs(enc, 20),
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '192k',

@@ -16,7 +16,7 @@
 ### 배포 품질
 - **코드 서명** — Windows SmartScreen 경고 제거 (EV 인증서 or Azure Trusted Signing)
 - **자동 업데이트** — electron-updater (asset_manager 의 R2 방식 재사용 가능)
-- **LGPL ffmpeg 빌드 전환** — 인스톨러 193MB → ~10MB 축소 여지
+- ~~**LGPL ffmpeg 빌드 전환**~~ — ✅ v0.3.0에서 완료 (BtbN lgpl 빌드 + HW 인코더 폴백)
 
 ### 기능
 - **반복 캡처** — 매 N초 자동 PNG 시퀀스 (컨택트 시트는 있음, 자동 간격 캡처는 없음)
@@ -39,4 +39,4 @@
 - ⚠️ `ELECTRON_RUN_AS_NODE=1` 이 사용자 PowerShell 에 set 되어 있음 → launcher 가
   자체 strip 하지만 영구 제거 권장
   (`[Environment]::SetEnvironmentVariable('ELECTRON_RUN_AS_NODE', $null, 'User')`)
-- ffmpeg = BtbN GPL build (193MB · static)
+- ffmpeg = BtbN LGPL build (138MB · static, libx264/x265 제외 → HW 인코더 폴백 사용)

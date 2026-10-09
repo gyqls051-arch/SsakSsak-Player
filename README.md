@@ -65,8 +65,8 @@ npm run build          # 프로덕션 번들 (tsc + vite)
 npm run electron:build # 인스톨러(NSIS) 빌드 → release/
 ```
 
-`resources/bin/`의 mpv·ffmpeg·ffprobe 바이너리는 GPL 라이선스이며 저장소에 커밋되지 않습니다.
-`npm run setup:bin`이 공식 빌드를 내려받습니다.
+`resources/bin/`의 mpv(GPL)·ffmpeg/ffprobe(LGPL 빌드) 바이너리는 저장소에 커밋되지 않습니다.
+`npm run setup:bin`이 공식 빌드(BtbN LGPL)를 내려받습니다.
 
 ---
 
@@ -75,10 +75,10 @@ npm run electron:build # 인스톨러(NSIS) 빌드 → release/
 이 프로젝트는 **이중 라이선스 구조**입니다.
 
 - **싹싹김치 플레이어 소스 코드 → [MIT](LICENSE)**
-- **배포 인스톨러 → mpv(GPLv2+) · FFmpeg(GPLv3) 바이너리를 번들**
+- **배포 인스톨러 → mpv(GPLv2+) · FFmpeg(LGPLv3 빌드) 바이너리를 번들**
 
 mpv·ffmpeg는 앱에 링크되지 않고 **별도 프로세스(IPC / child process)로 호출**되므로(단순 집합, mere
-aggregation), 본 앱 코드의 소스 공개 의무는 발생하지 않습니다. 다만 번들된 GPL 바이너리에 대해서는
+aggregation), 본 앱 코드의 소스 공개 의무는 발생하지 않습니다. 다만 번들된 GPL/LGPL 바이너리에 대해서는
 라이선스 전문 동봉 + 대응 소스 제공 의무가 있으며, 그 이행 방법(정확한 버전·소스 커밋 링크·written offer)은
 **[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)** 에 정리되어 있습니다.
 

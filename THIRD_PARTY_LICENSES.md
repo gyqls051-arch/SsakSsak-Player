@@ -3,9 +3,9 @@
 싹싹김치 플레이어의 인스톨러 배포물에는 아래 제3자 소프트웨어가 포함됩니다.
 본 앱의 소스 코드는 [MIT 라이선스](LICENSE)이며, 아래 컴포넌트들은 각자의 라이선스 조건에 따릅니다.
 
-> **중요**: 번들된 ffmpeg는 **GPLv3**(`--enable-gpl --enable-version3`), mpv는 **GPLv2+** 입니다.
-> 이들을 함께 담은 인스톨러(`싹싹김치 플레이어 Setup X.X.X.exe`)의 GPL 컴포넌트 부분은
-> 보수적으로 **GPLv3 의무를 따른다**고 명시합니다.
+> **중요**: 번들된 ffmpeg는 **LGPLv3** 빌드, mpv는 **GPLv2+** 입니다.
+> 이들을 함께 담은 인스톨러(`싹싹김치 플레이어 Setup X.X.X.exe`)의 GPL 컴포넌트(mpv) 부분은
+> 보수적으로 **GPL 의무를 따른다**고 명시합니다.
 > 본 앱 자체 코드는 MIT이며, mpv·ffmpeg를 **별도 프로세스로 호출(단순 집합 / mere aggregation)** 하므로
 > 본 앱 소스 공개 의무는 전염되지 않습니다. 의무 이행 방법은 아래 [GPL 의무 사항 충족 안내](#gpl-의무-사항-충족-안내) 참고.
 
@@ -29,27 +29,27 @@
 
 ---
 
-## 2. FFmpeg (트랜스코드 + 메타데이터) ⚠️ GPL
+## 2. FFmpeg (트랜스코드 + 메타데이터) — LGPL
 
-- **라이선스**: **GPLv3** (`--enable-gpl --enable-version3`). `--enable-nonfree` 없음 → 재배포 가능, `--disable-libfdk-aac` 확인.
+- **라이선스**: **LGPLv3** (`--enable-version3`, `--enable-gpl` 없음 — `ffmpeg-master-latest-win64-lgpl.zip` 빌드). `--enable-nonfree` 없음 → 재배포 가능, `--disable-libfdk-aac` 확인.
 - **출처**: https://ffmpeg.org/
 - **소스 코드**: https://github.com/FFmpeg/FFmpeg
-- **공식 Windows 빌드 제공처**: BtbN/FFmpeg-Builds — https://github.com/BtbN/FFmpeg-Builds (`ffmpeg-master-latest-win64-gpl.zip`)
-- **번들 버전 (정확)**: `N-124464-gb2867481d9` (2026-05-15 빌드)
+- **공식 Windows 빌드 제공처**: BtbN/FFmpeg-Builds — https://github.com/BtbN/FFmpeg-Builds (`ffmpeg-master-latest-win64-lgpl.zip`)
+- **번들 버전 (정확)**: `N-127252-ga25ba44c0c` (2026-10-08 빌드)
 - **대응 소스 (corresponding source)**:
-  - FFmpeg: https://github.com/FFmpeg/FFmpeg/tree/b2867481d9
+  - FFmpeg: https://github.com/FFmpeg/FFmpeg/tree/a25ba44c0c
   - 빌드 스크립트: https://github.com/BtbN/FFmpeg-Builds
 - **사용 방식**:
   - `ffmpeg.exe`, `ffprobe.exe`는 `child_process.spawn`으로 별도 프로세스 호출
   - 본 앱과 FFmpeg는 파일 시스템 + stdin/stdout으로만 통신
-- **포함된 GPL 컴포넌트**: libx264, libx265, libxvid, libvidstab, frei0r 등
-- **사용자 권리**: 번들된 `ffmpeg.exe` / `ffprobe.exe`를 다른 호환 빌드로 교체 가능.
+- **LGPL 고지**: `resources/bin/LICENSE.txt` (LGPL 전문) — 인스톨러에도 함께 포함
+- **사용자 권리**: 번들된 `ffmpeg.exe` / `ffprobe.exe`를 다른 호환 빌드로 교체 가능 (LGPL §4d의 교체 권리).
 
-### LGPL 빌드로 교체하고 싶다면
+### H.264 인코더 참고
 
-향후 `scripts/setup-binaries.ps1`에 LGPL 옵션 분기를 추가할 계획.
-현재는 수동으로 BtbN LGPL 빌드(`ffmpeg-master-latest-win64-lgpl.zip`)를 다운받아
-`resources/bin/`에 교체할 수 있습니다. 단, LGPL 빌드는 libx264/x265가 빠지므로 일부 트랜스코드 프리셋이 작동하지 않을 수 있습니다.
+LGPL 빌드에는 libx264(GPL)가 없으므로, 트랜스코드·클립보내기는 하드웨어 인코더
+(`h264_nvenc` → `h264_qsv` → `h264_amf` → `h264_mf` → `libopenh264`)를 실인코드 테스트로
+자동 선택하며, 시작 직후 실패 시 다음 후보로 자동 재시도합니다 (`electron/transcode.js`).
 
 ---
 
@@ -128,7 +128,7 @@ Electron에 번들된 Chromium은 다음 라이선스를 따릅니다:
 1. **본 문서 (THIRD_PARTY_LICENSES.md)** 및 각 GPL 컴포넌트의 라이선스 전문
 2. **mpv 대응 소스**: https://github.com/mpv-player/mpv/tree/5921fe50b
    (빌드 스크립트: https://github.com/shinchiro/mpv-winbuild-cmake )
-3. **ffmpeg 대응 소스**: https://github.com/FFmpeg/FFmpeg/tree/b2867481d9
+3. **ffmpeg 대응 소스**: https://github.com/FFmpeg/FFmpeg/tree/a25ba44c0c
    (빌드 스크립트: https://github.com/BtbN/FFmpeg-Builds )
 4. **LICENSE (MIT, 본 앱 소스용)**
 5. (선택) `싹싹김치 플레이어 Setup X.X.X.exe` 또는 동등한 형태의 빌드 산출물
@@ -138,7 +138,7 @@ Electron에 번들된 Chromium은 다음 라이선스를 따릅니다:
 > 위 "대응 소스" 링크는 **실제 번들된 바이너리와 동일한 커밋**을 가리킵니다 (GPLv3 §6 / GPLv2 §3의
 > "corresponding source" 요건). 빌드를 새 버전으로 교체하면 이 커밋 해시도 함께 갱신해야 합니다.
 
-### 서면 제공 오퍼 (Written Offer — GPLv3 §6 / GPLv2 §3)
+### 서면 제공 오퍼 (Written Offer — GPLv2 §3 / LGPLv3 §4d)
 
 싹싹김치 플레이어 배포자는, 본 인스톨러를 수령한 모든 제3자에게 배포일로부터 **최소 3년간**, 번들된 mpv 및
 FFmpeg 바이너리에 **대응하는 완전한 소스 코드**를 (a) 위 공개 저장소 링크를 통해 무상으로, 또는 (b) 요청 시
