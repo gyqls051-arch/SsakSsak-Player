@@ -1,4 +1,6 @@
 const { app, BrowserWindow, protocol } = require('electron');
+let autoUpdater = null;
+try { ({ autoUpdater } = require('electron-updater')); } catch { /* dev env without dep */ }
 const state = require('./state.js');
 const { createMainWindow, warmupMpv, openFileInRenderer } = require('./windows.js');
 const { registerIpc, registerProtocols } = require('./ipc.js');
@@ -56,6 +58,12 @@ if (!gotLock) {
       if (state.isQuitting) return;
       void trackOperation(warmupMpv());
     }, 300);
+
+    if (app.isPackaged && autoUpdater) {
+      autoUpdater.autoDownload = true;
+      autoUpdater.on('error', (err) => console.warn('[updater]', err && err.message));
+      void autoUpdater.checkForUpdatesAndNotify();
+    }
   });
 
   app.on('before-quit', (event) => {
