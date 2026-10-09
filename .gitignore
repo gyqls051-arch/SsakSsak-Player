@@ -20,6 +20,7 @@ npm-debug.log*
 
 # Bundled binaries (downloaded by user/CI, not committed)
 resources/bin/*.exe
+resources/bin/*.dll
 !resources/bin/.gitkeep
 
 # 릴리스 해시 계산용 임시 다운로드(ffmpeg 등) — 커밋하지 않는다

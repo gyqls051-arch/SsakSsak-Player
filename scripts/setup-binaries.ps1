@@ -57,10 +57,11 @@ $ffprobeOut = Join-Path $binDir 'ffprobe.exe'
 if ((Test-Path $ffmpegOut) -and (Test-Path $ffprobeOut)) {
     Write-Host "[skip] ffmpeg.exe + ffprobe.exe already present"
 } else {
-    Write-Host "[ffmpeg] downloading BtbN LGPL build..."
+    Write-Host "[ffmpeg] downloading BtbN LGPL shared build..."
     $ffmpegZip = Join-Path $tmpDir 'ffmpeg.zip'
-    # LGPL 빌드 — libx264/x265(GPL) 제외. 인코더는 nvenc/qsv/amf/mf/libopenh264 폴백.
-    $ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-lgpl.zip'
+    # LGPL shared 빌드 — libx264/x265(GPL) 제외, dll 공유로 용량 절감.
+    # 인코더는 nvenc/qsv/amf/mf/libopenh264 폴백 (electron/transcode.js).
+    $ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-lgpl-shared.zip'
     Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegZip
 
     Write-Host "[ffmpeg] extracting (zip — native PowerShell)..."
@@ -80,6 +81,12 @@ if ((Test-Path $ffmpegOut) -and (Test-Path $ffprobeOut)) {
     } else {
         Write-Warning "ffprobe.exe not found in archive"
     }
+
+    # shared 빌드 — av*.dll 을 함께 복사 (ffmpeg.exe 와 같은 폴더 필요)
+    Get-ChildItem -Path $ffmpegExtract -Recurse -Filter '*.dll' | ForEach-Object {
+        Copy-Item $_.FullName (Join-Path $binDir $_.Name) -Force
+    }
+    Write-Host "[ffmpeg] dll files -> $binDir"
 
     $foundLic = Get-ChildItem -Path $ffmpegExtract -Recurse -Filter 'LICENSE.txt' | Select-Object -First 1
     if ($foundLic) {

@@ -31,10 +31,10 @@
 
 ## 2. FFmpeg (트랜스코드 + 메타데이터) — LGPL
 
-- **라이선스**: **LGPLv3** (`--enable-version3`, `--enable-gpl` 없음 — `ffmpeg-master-latest-win64-lgpl.zip` 빌드). `--enable-nonfree` 없음 → 재배포 가능, `--disable-libfdk-aac` 확인.
+- **라이선스**: **LGPLv3** (`--enable-version3`, `--enable-gpl` 없음 — `ffmpeg-master-latest-win64-lgpl-shared.zip` 빌드). `--enable-nonfree` 없음 → 재배포 가능, `--disable-libfdk-aac` 확인.
 - **출처**: https://ffmpeg.org/
 - **소스 코드**: https://github.com/FFmpeg/FFmpeg
-- **공식 Windows 빌드 제공처**: BtbN/FFmpeg-Builds — https://github.com/BtbN/FFmpeg-Builds (`ffmpeg-master-latest-win64-lgpl.zip`)
+- **공식 Windows 빌드 제공처**: BtbN/FFmpeg-Builds — https://github.com/BtbN/FFmpeg-Builds (`ffmpeg-master-latest-win64-lgpl-shared.zip`)
 - **번들 버전 (정확)**: `N-127252-ga25ba44c0c` (2026-10-08 빌드)
 - **대응 소스 (corresponding source)**:
   - FFmpeg: https://github.com/FFmpeg/FFmpeg/tree/a25ba44c0c
