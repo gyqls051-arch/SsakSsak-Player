@@ -74,7 +74,7 @@ npm run electron:build # 인스톨러(NSIS) 빌드 → release/
 
 이 프로젝트는 **이중 라이선스 구조**입니다.
 
-- **싹싹김치 플레이어 소스 코드 → [MIT](LICENSE)**
+- **싹싹김치 플레이어 소스 코드 → [싹싹김치 프리웨어 라이선스](LICENSE)** (무료 사용 가능, 유료 재판매·변조 배포·사칭 금지)
 - **배포 인스톨러 → mpv(GPLv2+) · FFmpeg(LGPLv3 빌드) 바이너리를 번들**
 
 mpv·ffmpeg는 앱에 링크되지 않고 **별도 프로세스(IPC / child process)로 호출**되므로(단순 집합, mere
