@@ -59,11 +59,7 @@ if (!gotLock) {
       void trackOperation(warmupMpv());
     }, 300);
 
-    if (app.isPackaged && autoUpdater) {
-      autoUpdater.autoDownload = true;
-      autoUpdater.on('error', (err) => console.warn('[updater]', err && err.message));
-      void autoUpdater.checkForUpdatesAndNotify();
-    }
+    void require('./update-policy').startUpdates({ app, updater: autoUpdater, repo: 'SsakSsak-Player' });
   });
 
   app.on('before-quit', (event) => {
