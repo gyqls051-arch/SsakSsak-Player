@@ -59,6 +59,15 @@
       {
         "from": "resources/bin",
         "to": "bin"
+      },
+      {
+        "from": "resources/brand",
+        "to": "brand",
+        "filter": [
+          "app.ico",
+          "app.png",
+          "LUCIDE-LICENSE.txt"
+        ]
       }
     ],
     "extraFiles": [
@@ -88,12 +97,17 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "resources/brand/app.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "SsakSsak-Player-Setup.${ext}"
+      "artifactName": "SsakSsak-Player-Setup.${ext}",
+      "installerIcon": "resources/brand/app.ico",
+      "uninstallerIcon": "resources/brand/app.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "publish": {
       "provider": "github",

@@ -263,6 +263,9 @@ async function createMainWindow() {
   }
 
   state.mainWindow = new BrowserWindow({
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'brand', 'app.ico')
+      : path.join(__dirname, '..', 'resources', 'brand', 'app.ico'),
     width: 1280,
     height: 800,
     minWidth: 720,
